@@ -5,6 +5,7 @@ import {
 	parseAgentCommand,
 	parseForwardedArgs,
 	resolveForwardedOptions,
+	runChildTurns,
 	waitForInstruction,
 } from "../runner.ts";
 import type { RunningAgent } from "../shared.ts";
@@ -651,5 +652,75 @@ describe("waitForInstruction — idle lifecycle parking", () => {
 		agent.retire?.();
 
 		await expect(parked).resolves.toBe("first");
+	});
+});
+
+describe("runChildTurns — turn interruption", () => {
+	test("an interrupted prompt becomes an idle, steerable turn instead of ending the session", async () => {
+		let resolvePrompt = () => undefined;
+		const messages: Array<Record<string, unknown>> = [];
+		const session = {
+			agent: { state: { messages } },
+			prompt: () =>
+				new Promise<void>((resolve) => {
+					resolvePrompt = resolve;
+				}),
+		} as unknown as NonNullable<RunningAgent["session"]>;
+		const agent = {
+			id: "user-1",
+			command: "agent",
+			inheritedContext: true,
+			model: "provider/model",
+			modelLabel: "model",
+			task: "plan the migration",
+			invocation: "/agent plan the migration",
+			notifyMainAgent: false,
+			status: "running",
+			startedAt: Date.now(),
+			turnStartedAt: Date.now(),
+			activeTools: new Map<string, string>(),
+			toolUses: 0,
+			turnCount: 0,
+			responseText: "",
+			inheritedMessageCount: 0,
+			session,
+			finished: Promise.resolve(),
+		} satisfies RunningAgent;
+		const entries: unknown[] = [];
+		const pi = {
+			appendEntry: (_customType: string, data: unknown) => entries.push(data),
+			sendMessage: () => {
+				throw new Error("An interrupted default agent must not send a message to the main agent");
+			},
+		};
+		const widget = { update: () => undefined };
+
+		const lifecycle = runChildTurns(
+			pi as never,
+			() => false,
+			agent.task,
+			session,
+			agent,
+			widget as never,
+		);
+		await Promise.resolve();
+		agent.interruptRequested = true;
+		messages.push({
+			role: "assistant",
+			content: [{ type: "text", text: "Partial analysis" }],
+			stopReason: "aborted",
+		});
+		resolvePrompt();
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(agent.status).toBe("idle");
+		expect(agent.responseText).toContain("Interrupted by user");
+		expect(agent.responseText).toContain("Partial analysis");
+		expect(agent.resume).toBeFunction();
+		expect(agent.retire).toBeFunction();
+		expect(entries).toHaveLength(1);
+
+		agent.retire?.();
+		await lifecycle;
 	});
 });

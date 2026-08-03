@@ -329,42 +329,7 @@ async function runAgentLifecycle(
 			widget,
 		);
 		unsubscribe = subscribeToChildSession(session, runningAgent, widget);
-		let instruction = `You are running in an ephemeral, forked background process now. ${task}`;
-		while (true) {
-			logSteering(runningAgent.id, "turn-prompt-started", {
-				streaming: session.isStreaming,
-				instructionLength: instruction.length,
-			});
-			await session.prompt(instruction);
-			const response = getFinalAssistantText(session);
-			logSteering(runningAgent.id, "turn-prompt-resolved", {
-				responseLength: response.length,
-				messageCount: session.agent.state.messages.length,
-			});
-			runningAgent.status = "done-waiting-to-post";
-			runningAgent.completedAt = Date.now();
-			runningAgent.responseText = response;
-			const resultMessage = buildAgentResultMessage(
-				runningAgent,
-				{ ok: true, response },
-				{ display: runningAgent.notifyMainAgent },
-			);
-			if (runningAgent.notifyMainAgent) {
-				widget.addCompleted(runningAgent, resultMessage, { joinable: false });
-				if (postUserAgentResult(pi, isShuttingDown, true, resultMessage))
-					runningAgent.status = "posted";
-				return;
-			}
-			postUserAgentResult(pi, isShuttingDown, false, resultMessage);
-			runningAgent.pendingJoinMessage = resultMessage;
-			if (isShuttingDown()) return;
-			runningAgent.status = "idle";
-			logSteering(runningAgent.id, "agent-idle", { turnCount: runningAgent.turnCount });
-			widget.update();
-			const next = await waitForInstruction(runningAgent, widget);
-			if (next === undefined) return;
-			instruction = next;
-		}
+		await runChildTurns(pi, isShuttingDown, task, session, runningAgent, widget);
 	} catch (error) {
 		if (runningAgent.aborted) {
 			logSteering(runningAgent.id, "agent-aborted");
@@ -390,6 +355,91 @@ async function runAgentLifecycle(
 			await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 		}
 	}
+}
+
+/** Run turns on an initialized child session until it posts, retires, or shuts down. */
+export async function runChildTurns(
+	pi: ExtensionAPI,
+	isShuttingDown: () => boolean,
+	task: string,
+	session: AgentSession,
+	runningAgent: RunningAgent,
+	widget: UserAgentWidget,
+): Promise<void> {
+	let instruction = `You are running in an ephemeral, forked background process now. ${task}`;
+	while (true) {
+		const turnMessageStart = session.agent.state.messages.length;
+		if (!runningAgent.interruptRequested) {
+			logSteering(runningAgent.id, "turn-prompt-started", {
+				streaming: session.isStreaming,
+				instructionLength: instruction.length,
+			});
+			await session.prompt(instruction);
+		}
+		if (runningAgent.interruptRequested) {
+			const response = interruptedTurnResponse(session, turnMessageStart);
+			runningAgent.interruptRequested = false;
+			runningAgent.status = "done-waiting-to-post";
+			runningAgent.completedAt = Date.now();
+			runningAgent.responseText = response;
+			const resultMessage = buildAgentResultMessage(
+				runningAgent,
+				{ ok: true, response },
+				{ display: false },
+			);
+			postUserAgentResult(pi, isShuttingDown, false, resultMessage);
+			runningAgent.pendingJoinMessage = runningAgent.notifyMainAgent
+				? undefined
+				: resultMessage;
+			if (isShuttingDown()) return;
+			runningAgent.status = "idle";
+			logSteering(runningAgent.id, "turn-interrupted", { turnCount: runningAgent.turnCount });
+			widget.update();
+			const next = await waitForInstruction(runningAgent, widget);
+			if (next === undefined) return;
+			instruction = next;
+			continue;
+		}
+
+		const response = getFinalAssistantText(session);
+		logSteering(runningAgent.id, "turn-prompt-resolved", {
+			responseLength: response.length,
+			messageCount: session.agent.state.messages.length,
+		});
+		runningAgent.status = "done-waiting-to-post";
+		runningAgent.completedAt = Date.now();
+		runningAgent.responseText = response;
+		const resultMessage = buildAgentResultMessage(
+			runningAgent,
+			{ ok: true, response },
+			{ display: runningAgent.notifyMainAgent },
+		);
+		if (runningAgent.notifyMainAgent) {
+			widget.addCompleted(runningAgent, resultMessage, { joinable: false });
+			const posted = postUserAgentResult(pi, isShuttingDown, true, resultMessage);
+			runningAgent.status = posted ? "posted" : runningAgent.status;
+			return;
+		}
+		postUserAgentResult(pi, isShuttingDown, false, resultMessage);
+		runningAgent.pendingJoinMessage = resultMessage;
+		if (isShuttingDown()) return;
+		runningAgent.status = "idle";
+		logSteering(runningAgent.id, "agent-idle", { turnCount: runningAgent.turnCount });
+		widget.update();
+		const next = await waitForInstruction(runningAgent, widget);
+		if (next === undefined) return;
+		instruction = next;
+	}
+}
+
+function interruptedTurnResponse(session: AgentSession, turnMessageStart: number): string {
+	const assistantMessages = session.agent.state.messages
+		.slice(turnMessageStart)
+		.filter((message) => message.role === "assistant");
+	const lastAssistantMessage = assistantMessages.at(-1);
+	const partialResponse = lastAssistantMessage ? assistantText(lastAssistantMessage).trim() : "";
+	if (!partialResponse) return "Interrupted by user.";
+	return `Interrupted by user.\n\n${partialResponse}`;
 }
 
 async function createChildSession(

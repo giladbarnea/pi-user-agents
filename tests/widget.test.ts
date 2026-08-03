@@ -109,6 +109,133 @@ describe("UserAgentWidget per-turn duration", () => {
 });
 
 describe("UserAgentWidget steering", () => {
+	test("Ctrl+x interrupts the selected running agent without disposing it", () => {
+		let abortCalls = 0;
+		const session = {
+			isStreaming: true,
+			agent: { state: { messages: [] } },
+			abort: async () => {
+				abortCalls += 1;
+			},
+			getContextUsage: () => undefined,
+		} as unknown as NonNullable<RunningAgent["session"]>;
+		const runningAgent = {
+			id: "user-1",
+			command: "agent",
+			inheritedContext: true,
+			model: "provider/model",
+			modelLabel: "model",
+			task: "plan the migration",
+			invocation: "/agent plan the migration",
+			notifyMainAgent: false,
+			status: "running",
+			startedAt: Date.now(),
+			turnStartedAt: Date.now(),
+			activeTools: new Map<string, string>(),
+			toolUses: 0,
+			turnCount: 0,
+			responseText: "",
+			inheritedMessageCount: 0,
+			session,
+			finished: Promise.resolve(),
+		} satisfies RunningAgent;
+		const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined);
+		let terminalInput = (_data: string): unknown => undefined;
+		const ui = {
+			onTerminalInput: (handler: typeof terminalInput) => {
+				terminalInput = handler;
+				return () => undefined;
+			},
+			getEditorText: () => "",
+			setWidget: () => undefined,
+		} as unknown as UIContext;
+
+		widget.setUI(ui);
+		widget.update();
+		terminalInput("\x1b[B");
+		terminalInput("\x18");
+
+		expect(abortCalls).toBe(1);
+		expect(runningAgent.aborted).toBeUndefined();
+	});
+
+	test("Ctrl+x interrupts the running agent from its overlay", () => {
+		let abortCalls = 0;
+		const session = {
+			isStreaming: true,
+			agent: { state: { messages: [] } },
+			abort: async () => {
+				abortCalls += 1;
+			},
+			getContextUsage: () => undefined,
+		} as unknown as NonNullable<RunningAgent["session"]>;
+		const runningAgent = {
+			id: "user-1",
+			command: "agent",
+			inheritedContext: true,
+			model: "provider/model",
+			modelLabel: "model",
+			task: "plan the migration",
+			invocation: "/agent plan the migration",
+			notifyMainAgent: false,
+			status: "running",
+			startedAt: Date.now(),
+			turnStartedAt: Date.now(),
+			activeTools: new Map<string, string>(),
+			toolUses: 0,
+			turnCount: 0,
+			responseText: "",
+			inheritedMessageCount: 0,
+			session,
+			finished: Promise.resolve(),
+		} satisfies RunningAgent;
+		const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined);
+		const theme = {
+			fg: (_color: string, text: string) => text,
+			bold: (text: string) => text,
+			italic: (text: string) => text,
+			underline: (text: string) => text,
+			strikethrough: (text: string) => text,
+		} as unknown as Theme;
+		const tui = {
+			terminal: { columns: 120, rows: 20 },
+			requestRender: () => undefined,
+		} as unknown as TUI;
+		let terminalInput = (_data: string): unknown => undefined;
+		let viewer: Component | undefined;
+		const ui = {
+			onTerminalInput: (handler: typeof terminalInput) => {
+				terminalInput = handler;
+				return () => undefined;
+			},
+			getEditorText: () => "",
+			setWidget: () => undefined,
+			custom: (
+				factory: (
+					tui: TUI,
+					theme: Theme,
+					keybindings: unknown,
+					done: (result: undefined) => void,
+				) => Component,
+			) => {
+				viewer = factory(tui, theme, undefined, () => undefined);
+				return new Promise<undefined>(() => undefined);
+			},
+		} as unknown as UIContext;
+
+		widget.setUI(ui);
+		widget.update();
+		terminalInput("\x1b[B");
+		terminalInput("\r");
+		if (!viewer) throw new Error("Agent viewer did not open");
+
+		expect(viewer.render(100).join("\n")).toContain("Ctrl+x interrupt");
+		viewer.handleInput?.("\x18");
+
+		expect(abortCalls).toBe(1);
+		expect(runningAgent.aborted).toBeUndefined();
+	});
+
 	test("resumes following the transcript tail when steering is committed", () => {
 		const messages = Array.from({ length: 12 }, (_, index) => ({
 			role: "user",

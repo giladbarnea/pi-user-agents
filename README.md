@@ -76,6 +76,8 @@ An agent launched without `-j` offers `j join` in its overlay once a turn has co
 
 The widget below the editor shows in-flight, turn-complete, and finished agents. Use `←` or `↓` to select it, `Enter` to open an agent overlay, and `x` to stop a running agent, dispose a turn-complete one, or dismiss a finished one.
 
+Press `Ctrl+x` on a selected running agent, or inside its overlay, to interrupt only the current turn. The agent becomes idle and remains available for steering, joining when applicable, or disposal.
+
 ### Context window meter
 
 Each agent row places a one-cell context meter between the command and its prompt:

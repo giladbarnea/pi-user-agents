@@ -247,6 +247,14 @@ export class UserAgentWidget {
 		}
 
 		const selected = entries[this.selectedIndex];
+		if (
+			matchesKey(data, "ctrl+x") &&
+			selected?.kind === "running" &&
+			isLiveAgent(selected.agent)
+		) {
+			this.interruptRunning(selected.agent);
+			return { consume: true };
+		}
 		if (matchesKey(data, "enter")) {
 			if (selected) this.openSelected(selected.agent);
 			return { consume: true };
@@ -291,6 +299,9 @@ export class UserAgentWidget {
 						done,
 						() => this.canJoinMainContext(agent.id),
 						() => this.joinMainContext(agent.id),
+						() => {
+							if (isRunningAgent(agent)) this.interruptRunning(agent);
+						},
 					),
 				{ overlay: true, overlayOptions: { anchor: "center", width: "90%", maxHeight: "70%" } },
 			)
@@ -304,6 +315,12 @@ export class UserAgentWidget {
 		agent.aborted = true;
 		void agent.session?.abort();
 		agent.retire?.();
+		this.update();
+	}
+
+	private interruptRunning(agent: RunningAgent): void {
+		agent.interruptRequested = true;
+		void agent.session?.abort();
 		this.update();
 	}
 
@@ -392,7 +409,14 @@ export class UserAgentWidget {
 		];
 		let hint: string;
 		if (!this.active) hint = "←/↓ select agent";
-		else hint = "↑↓ select · Enter view · x dispose · Esc back";
+		else {
+			const selected = entries[this.selectedIndex];
+			const interrupt =
+				selected?.kind === "running" && isLiveAgent(selected.agent)
+					? " · Ctrl+x interrupt"
+					: "";
+			hint = `↑↓ select · Enter view${interrupt} · x dispose · Esc back`;
+		}
 		lines.push(truncateToWidth(`  ${theme.fg(this.active ? "accent" : "dim", hint)}`, width));
 
 		const maxEntries = Math.max(1, Math.floor((MAX_WIDGET_LINES - lines.length) / 2));
@@ -592,9 +616,15 @@ class AgentViewer implements Component {
 		private readonly done: (result: AgentViewerAction) => void,
 		private readonly canJoinMainContext: () => boolean,
 		private readonly joinMainContext: () => void,
+		private readonly interrupt: () => void,
 	) {}
 
 	handleInput(data: string): void {
+		if (matchesKey(data, "ctrl+x") && isLiveAgent(this.agent)) {
+			this.interrupt();
+			this.tui.requestRender();
+			return;
+		}
 		if (this.composer) {
 			this.composer.handleInput(data);
 			this.tui.requestRender();
@@ -715,6 +745,7 @@ class AgentViewer implements Component {
 					th.fg("dim", "↑↓ scroll"),
 					th.fg("dim", "PgUp/PgDn"),
 					this.canJoinMainContext() ? th.fg("dim", "j join") : "",
+					isLiveAgent(this.agent) ? th.fg("dim", "Ctrl+x interrupt") : "",
 					th.fg("dim", isLiveAgent(this.agent) ? "Esc hide" : "x dispose"),
 				].filter(Boolean),
 			);
