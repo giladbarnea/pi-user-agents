@@ -1,0 +1,4 @@
+- [x] Agents should stay alive until the user shuts them down explicitly. While all this time available for user steering.
+- [ ] "Send to main agent" button ("Join main context")
+- [ ] Place "use up/down" text alongside the wodget's title (same row) 
+- [x] Syntax highlighting to distinguish args, args values, prompt, and error color on blocked or badly placed args
