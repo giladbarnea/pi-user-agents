@@ -848,15 +848,14 @@ class AgentViewer implements Component {
 		const lines = this.transcriptLines(width);
 		if (isLiveAgent(this.agent)) {
 			if (lines.length === 0) return [this.theme.fg("dim", "(waiting for first message…)")];
-			const activity = describeActivity(this.agent).text.replace(/\s+/g, " ").trim();
-			if (activity)
+			const activity = describeActivity(this.agent);
+			if (activity.text.trim()) {
+				const prefix = this.theme.fg("accent", "▍ ");
 				lines.push(
 					"",
-					truncateToWidth(
-						`${this.theme.fg("accent", "▍ ")}${this.theme.fg("dim", activity)}`,
-						width,
-					),
+					`${prefix}${renderActivity(activity, width - visibleWidth(prefix), this.theme)}`,
 				);
+			}
 			return lines;
 		}
 		if (agentFailed(this.agent)) {

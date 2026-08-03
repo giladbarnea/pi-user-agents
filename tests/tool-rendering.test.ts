@@ -326,6 +326,22 @@ describe("overlay tool rendering — the raw transcript is gone", () => {
 		expect(widgetText).toContain("grep");
 		expect(widgetText).toContain("TODO");
 	});
+
+	test("the live activity row inside the overlay renders Markdown", () => {
+		const call = assistantCalls({
+			id: "call-bash",
+			name: "bash",
+			arguments: { command: "git remote -v" },
+		});
+		const rows = buildHarness([call], {
+			status: "running",
+			latestFinalizedMessage: call,
+		}).rows();
+		const activity = rows.at(-1) ?? "";
+
+		expect(activity).toContain("▍ bash $ git remote -v");
+		expect(activity).not.toContain("`bash`");
+	});
 });
 
 describe("overlay tool rendering — first-class tools", () => {

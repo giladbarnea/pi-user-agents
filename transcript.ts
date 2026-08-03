@@ -1,4 +1,5 @@
-import { Text } from "@earendil-works/pi-tui";
+import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { Container, Markdown, Text } from "@earendil-works/pi-tui";
 import type {
 	AgentCommandDetails,
 	AgentCommandName,
@@ -151,7 +152,7 @@ function renderAgentCard(
 	content: string,
 	details: AgentCommandDetails | undefined,
 	theme: Theme,
-): Text {
+): Container {
 	const ok = details?.ok ?? !content.includes("<user_agent_error");
 	const command = details ? `/${details.command}` : "/agent";
 	const icon = ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
@@ -167,8 +168,19 @@ function renderAgentCard(
 	let text = `${icon} ${theme.bold(command)} ${statusText}`;
 	if (parts.length > 0) text += ` ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}`;
 	if (task) text += `\n  ${theme.fg("dim", `task: ${truncatePlain(task, 88)}`)}`;
-	text += `\n  ${theme.fg(ok ? "dim" : "error", `⎿  ${truncatePlain(preview, 110)}`)}`;
-	return new Text(text, 0, 0);
+	const card = new Container();
+	card.addChild(new Text(text, 0, 0));
+	const previewText = `⎿  ${truncatePlain(preview, 110)}`;
+	if (ok) {
+		card.addChild(
+			new Markdown(previewText, 2, 0, getMarkdownTheme(), {
+				color: (value) => theme.fg("dim", value),
+			}),
+		);
+	} else {
+		card.addChild(new Text(`  ${theme.fg("error", previewText)}`, 0, 0));
+	}
+	return card;
 }
 
 function customMessageContentText(content: unknown): string {
