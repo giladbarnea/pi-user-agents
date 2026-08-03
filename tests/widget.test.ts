@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type {
-	Component,
-	TUI,
-} from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.js";
+import type { Component, TUI } from "@earendil-works/pi-tui";
 import type {
 	AgentMessage,
 	AgentResultMessage,

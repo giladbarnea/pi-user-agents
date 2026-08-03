@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { getThemeByName } from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
-import type {
-	Component,
-	TUI,
-} from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.js";
+import type { Component, TUI } from "@earendil-works/pi-tui";
 import type { AgentMessage, AgentStatus, RunningAgent, Theme, UIContext } from "../shared.js";
 import { UserAgentWidget } from "../widget.ts";
+
+const codingAgentEntry = import.meta.resolve("@earendil-works/pi-coding-agent");
+const { getThemeByName } = await import(
+	new URL("./modes/interactive/theme/theme.js", codingAgentEntry).href
+);
 
 /**
  * Historical tool rendering in the agent overlay.

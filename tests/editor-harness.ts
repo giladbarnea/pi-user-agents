@@ -1,18 +1,20 @@
-import { KeybindingsManager } from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
 import {
 	CustomEditor,
 	type ExtensionAPI,
 	type ExtensionContext,
+	type KeybindingsManager as PiKeybindingsManager,
 	type RegisteredCommand,
-} from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+} from "@earendil-works/pi-coding-agent";
 import {
 	type AutocompleteProvider,
 	CombinedAutocompleteProvider,
 	type EditorComponent,
 	type EditorTheme,
+	KeybindingsManager,
 	type SlashCommand,
 	type TUI,
-} from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.js";
+	TUI_KEYBINDINGS,
+} from "@earendil-works/pi-tui";
 import userAgent from "../index.ts";
 
 export type HarnessModel = { provider: string; id: string; name?: string };
@@ -136,7 +138,9 @@ export async function createEditorHarness(
 			noMatch: (text) => text,
 		},
 	};
-	const keybindings = new KeybindingsManager();
+	const keybindings = new KeybindingsManager(
+		TUI_KEYBINDINGS,
+	) as unknown as PiKeybindingsManager;
 	editor =
 		editorFactory?.(tui, editorTheme, keybindings) ??
 		new CustomEditor(tui, editorTheme, keybindings);

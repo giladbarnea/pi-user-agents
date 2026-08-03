@@ -1,4 +1,4 @@
-import { highlightCode } from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+import { highlightCode } from "@earendil-works/pi-coding-agent";
 
 import { padVisible, truncateAnsi, visibleWidth, wrapTextWithAnsi } from "./ansi.js";
 import { CAPS, GLYPHS } from "./constants.js";

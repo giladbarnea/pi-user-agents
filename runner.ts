@@ -13,7 +13,7 @@ import {
 	resolveCliModel,
 	SessionManager,
 	SettingsManager,
-} from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+} from "@earendil-works/pi-coding-agent";
 import { type AgentValueValidator, parseAgentCommand } from "./command-line.js";
 import type {
 	AgentCommandName,

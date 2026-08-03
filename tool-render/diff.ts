@@ -1,8 +1,8 @@
-import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import {
 	getLanguageFromPath,
 	highlightCode,
-} from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+	type ThemeColor,
+} from "@earendil-works/pi-coding-agent";
 
 import {
 	ANSI_BG_RESET,

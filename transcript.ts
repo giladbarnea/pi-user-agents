@@ -1,4 +1,4 @@
-import { Text } from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.js";
+import { Text } from "@earendil-works/pi-tui";
 import type {
 	AgentCommandDetails,
 	AgentCommandName,

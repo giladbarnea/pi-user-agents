@@ -1,5 +1,5 @@
-import type { ThemeColor } from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
-import type { EditorComponent } from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.js";
+import type { ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { EditorComponent } from "@earendil-works/pi-tui";
 import {
 	type AgentTokenSemantic,
 	type AgentValueValidator,

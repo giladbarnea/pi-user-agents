@@ -5,7 +5,7 @@ import type {
 	buildSessionContext,
 	ExtensionAPI,
 	ExtensionCommandContext,
-} from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+} from "@earendil-works/pi-coding-agent";
 
 export type { AgentSession, ExtensionAPI, ExtensionCommandContext };
 

@@ -5,7 +5,7 @@ import {
 	type ModelRuntime,
 	resolveModelScopeWithDiagnostics,
 	SettingsManager,
-} from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+} from "@earendil-works/pi-coding-agent";
 import {
 	type AutocompleteItem,
 	type AutocompleteProvider,
@@ -13,7 +13,7 @@ import {
 	decodeKittyPrintable,
 	type EditorComponent,
 	fuzzyFilter,
-} from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.js";
+} from "@earendil-works/pi-tui";
 import {
 	AGENT_OPTIONS,
 	analyzeAgentEditorInput,

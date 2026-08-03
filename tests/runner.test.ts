@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { ModelRuntime } from "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
 	buildChildResourceLoaderOptions,
 	parseAgentCommand,
