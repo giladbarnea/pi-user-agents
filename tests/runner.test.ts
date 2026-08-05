@@ -8,7 +8,7 @@ import {
 	runChildTurns,
 	waitForInstruction,
 } from "../runner.ts";
-import type { RunningAgent } from "../shared.ts";
+import type { AgentMessage, AgentResultMessage, RunningAgent } from "../shared.ts";
 
 /** The slice of RunningAgent that waitForInstruction reads and writes. */
 type RunningAgentForTest = Pick<
@@ -655,16 +655,26 @@ describe("waitForInstruction — idle lifecycle parking", () => {
 	});
 });
 
-describe("runChildTurns — turn interruption", () => {
-	test("an interrupted prompt becomes an idle, steerable turn instead of ending the session", async () => {
+describe("runChildTurns — main-context delivery", () => {
+	test("an interrupted partial response stays separate, while its resumed response can join", async () => {
 		let resolvePrompt = () => undefined;
+		let promptCalls = 0;
 		const messages: Array<Record<string, unknown>> = [];
 		const session = {
 			agent: { state: { messages } },
-			prompt: () =>
-				new Promise<void>((resolve) => {
-					resolvePrompt = resolve;
-				}),
+			prompt: () => {
+				promptCalls += 1;
+				if (promptCalls === 1)
+					return new Promise<void>((resolve) => {
+						resolvePrompt = resolve;
+					});
+				messages.push({
+					role: "assistant",
+					content: [{ type: "text", text: "Finished analysis" }],
+					stopReason: "stop",
+				});
+				return Promise.resolve();
+			},
 		} as unknown as NonNullable<RunningAgent["session"]>;
 		const agent = {
 			id: "user-1",
@@ -674,7 +684,8 @@ describe("runChildTurns — turn interruption", () => {
 			modelLabel: "model",
 			task: "plan the migration",
 			invocation: "/agent plan the migration",
-			notifyMainAgent: false,
+			notifyMainAgent: true,
+			mainContextState: "will-join",
 			status: "running",
 			startedAt: Date.now(),
 			turnStartedAt: Date.now(),
@@ -687,13 +698,17 @@ describe("runChildTurns — turn interruption", () => {
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
 		const entries: unknown[] = [];
+		const sentMessages: AgentResultMessage[] = [];
+		const completedMessages: AgentResultMessage[] = [];
 		const pi = {
 			appendEntry: (_customType: string, data: unknown) => entries.push(data),
-			sendMessage: () => {
-				throw new Error("An interrupted default agent must not send a message to the main agent");
-			},
+			sendMessage: (message: AgentResultMessage) => sentMessages.push(message),
 		};
-		const widget = { update: () => undefined };
+		const widget = {
+			update: () => undefined,
+			addCompleted: (_agent: RunningAgent, message: AgentResultMessage) =>
+				completedMessages.push(message),
+		};
 
 		const lifecycle = runChildTurns(
 			pi as never,
@@ -718,9 +733,76 @@ describe("runChildTurns — turn interruption", () => {
 		expect(agent.responseText).toContain("Partial analysis");
 		expect(agent.resume).toBeFunction();
 		expect(agent.retire).toBeFunction();
+		expect(agent.mainContextState).toBe("separate");
 		expect(entries).toHaveLength(1);
+		expect(sentMessages).toEqual([]);
 
-		agent.retire?.();
+		agent.resume?.("finish the analysis");
+		expect(agent.mainContextState).toBe("will-join");
 		await lifecycle;
+
+		expect(sentMessages).toHaveLength(1);
+		expect(completedMessages).toHaveLength(1);
+		expect(sentMessages[0]?.details).toMatchObject({
+			agentId: "user-1",
+			mainContextState: "will-join",
+		});
+	});
+
+	test("shutdown suppression cancels a scheduled join", async () => {
+		const messages = [
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "Finished analysis" }],
+				stopReason: "stop",
+			},
+		] as unknown as AgentMessage[];
+		const session = {
+			agent: { state: { messages } },
+			prompt: async () => undefined,
+		} as unknown as NonNullable<RunningAgent["session"]>;
+		const agent = {
+			id: "user-1",
+			command: "agent",
+			inheritedContext: true,
+			model: "provider/model",
+			modelLabel: "model",
+			task: "plan the migration",
+			invocation: "/agent -j plan the migration",
+			notifyMainAgent: true,
+			mainContextState: "will-join",
+			status: "running",
+			startedAt: Date.now(),
+			turnStartedAt: Date.now(),
+			activeTools: new Map<string, string>(),
+			toolUses: 0,
+			turnCount: 0,
+			responseText: "",
+			inheritedMessageCount: 0,
+			session,
+			finished: Promise.resolve(),
+		} satisfies RunningAgent;
+		const sentMessages: AgentResultMessage[] = [];
+		const completedMessages: AgentResultMessage[] = [];
+
+		await runChildTurns(
+			{
+				appendEntry: () => undefined,
+				sendMessage: (message: AgentResultMessage) => sentMessages.push(message),
+			} as never,
+			() => true,
+			agent.task,
+			session,
+			agent,
+			{
+				update: () => undefined,
+				addCompleted: (_agent: RunningAgent, message: AgentResultMessage) =>
+					completedMessages.push(message),
+			} as never,
+		);
+
+		expect(agent.mainContextState).toBe("separate");
+		expect(sentMessages).toEqual([]);
+		expect(completedMessages).toEqual([]);
 	});
 });

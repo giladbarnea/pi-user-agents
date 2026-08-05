@@ -16,6 +16,7 @@ export type Theme = ExtensionCommandContext["ui"]["theme"];
 export type UIContext = ExtensionCommandContext["ui"];
 
 export type AgentCommandName = "agent" | "agent-isolated";
+export type MainContextState = "separate" | "will-join" | "joined";
 export type AgentStatus =
 	| "starting"
 	| "running"
@@ -47,7 +48,9 @@ export type AgentResultMessage = {
 };
 
 export type AgentCommandDetails = {
+	agentId?: string;
 	command: AgentCommandName;
+	mainContextState?: MainContextState;
 	inheritedContext: boolean;
 	model: string;
 	modelLabel: string;
@@ -71,6 +74,7 @@ export type RunningAgent = {
 	invocation: string;
 	/** -j/--join: post invocation+result to the main agent and trigger its turn, instead of waiting quietly for the next user prompt. */
 	notifyMainAgent: boolean;
+	mainContextState: MainContextState;
 	status: AgentStatus;
 	startedAt: number;
 	/** Start of the current turn — equals startedAt until the user resumes an idle agent. */
@@ -103,6 +107,7 @@ export type CompletedAgent = {
 	command: AgentCommandName;
 	modelLabel: string;
 	task: string;
+	mainContextState: MainContextState;
 	pendingJoinMessage?: AgentResultMessage;
 	ok: boolean;
 	responseText: string;
@@ -152,6 +157,12 @@ export function formatModelLabel(model: Model): string {
 
 export function contextLabel(inheritedContext: boolean): string {
 	return inheritedContext ? "inherited context" : "isolated";
+}
+
+export function mainContextLabel(state: MainContextState | undefined): string | undefined {
+	if (state === "will-join") return "will join context";
+	if (state === "joined") return "joined context";
+	return undefined;
 }
 
 export function formatTurns(turnCount: number): string {

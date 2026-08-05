@@ -35,6 +35,7 @@ import {
 	formatToolUses,
 	formatTurns,
 	logSteering,
+	mainContextLabel,
 	MAX_WIDGET_LINES,
 	SPINNER,
 	truncatePlain,
@@ -109,6 +110,7 @@ export class UserAgentWidget {
 			command: agent.command,
 			modelLabel: agent.modelLabel,
 			task: agent.task,
+			mainContextState: agent.mainContextState,
 			pendingJoinMessage: options.joinable ? resultMessage : undefined,
 			ok: resultMessage.details.ok,
 			responseText: agent.responseText,
@@ -335,6 +337,17 @@ export class UserAgentWidget {
 		);
 	}
 
+	confirmMainContextJoin(agentId: string): boolean {
+		const agents = [
+			...[...this.runningAgents].filter((candidate) => candidate.id === agentId),
+			...this.completedAgents.filter((candidate) => candidate.id === agentId),
+		].filter((candidate) => candidate.mainContextState === "will-join");
+		if (agents.length === 0) return false;
+		for (const agent of agents) agent.mainContextState = "joined";
+		this.update();
+		return true;
+	}
+
 	private joinMainContext(agentId: string): void {
 		const idleAgent = this.idleAgent(agentId);
 		if (idleAgent) {
@@ -346,6 +359,8 @@ export class UserAgentWidget {
 		if (!completedAgent || !message) return;
 
 		completedAgent.pendingJoinMessage = undefined;
+		completedAgent.mainContextState = "will-join";
+		message.details.mainContextState = "will-join";
 		this.sendJoinedResult(message);
 		logSteering(agentId, "joined-main-context", { display: message.display });
 		this.update();
@@ -356,9 +371,11 @@ export class UserAgentWidget {
 		const message = agent.pendingJoinMessage;
 		if (!message) return;
 		agent.pendingJoinMessage = undefined;
+		agent.mainContextState = "will-join";
+		message.details.mainContextState = "will-join";
 		agent.status = "posted";
-		this.sendJoinedResult(message);
 		this.addCompleted(agent, message, { joinable: false });
+		this.sendJoinedResult(message);
 		agent.retire?.();
 		logSteering(agent.id, "joined-main-context", { display: message.display, live: true });
 		this.update();
@@ -465,6 +482,8 @@ export class UserAgentWidget {
 		const parts = inFlight
 			? [agent.modelLabel, contextLabel(agent.inheritedContext)]
 			: [agent.modelLabel];
+		const mainContext = mainContextLabel(agent.mainContextState);
+		if (mainContext) parts.push(mainContext);
 		if (agent.turnCount > 0) parts.push(formatTurns(agent.turnCount));
 		if (agent.toolUses > 0) parts.push(formatToolUses(agent.toolUses));
 		parts.push(
@@ -734,6 +753,7 @@ class AgentViewer implements Component {
 				content.length <= viewport
 					? "100%"
 					: `${Math.round(((this.scrollOffset + viewport) / content.length) * 100)}%`;
+			const mainContext = mainContextLabel(this.agent.mainContextState);
 			const footer = fitFooterSegments(
 				th,
 				innerW,
@@ -746,6 +766,7 @@ class AgentViewer implements Component {
 					th.fg("dim", "PgUp/PgDn"),
 					this.canJoinMainContext() ? th.fg("dim", "j join") : "",
 					isLiveAgent(this.agent) ? th.fg("dim", "Ctrl+x interrupt") : "",
+					mainContext ? th.fg("dim", mainContext) : "",
 					th.fg("dim", isLiveAgent(this.agent) ? "Esc hide" : "x dispose"),
 				].filter(Boolean),
 			);

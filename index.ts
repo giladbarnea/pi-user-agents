@@ -1,6 +1,11 @@
+import type {
+	MessageEndEvent,
+	MessageEndEventResult,
+} from "@earendil-works/pi-coding-agent";
 import { registerAgentAutocomplete } from "./autocomplete.js";
 import { handleAgentCommand } from "./runner.js";
-import type { ExtensionAPI, RunningAgent } from "./shared.js";
+import type { AgentCommandDetails, ExtensionAPI, RunningAgent } from "./shared.js";
+import { MESSAGE_TYPE } from "./shared.js";
 import { registerUserAgentRenderer } from "./transcript.js";
 import { UserAgentWidget } from "./widget.js";
 
@@ -14,6 +19,8 @@ export default function userAgent(pi: ExtensionAPI): void {
 
 	registerUserAgentRenderer(pi);
 	registerAgentAutocomplete(pi);
+
+	pi.on("message_end", (event) => confirmMainContextJoin(event, widget));
 
 	pi.registerCommand("agent", {
 		description:
@@ -64,4 +71,21 @@ export default function userAgent(pi: ExtensionAPI): void {
 		}
 		runningAgents.clear();
 	});
+}
+
+export function confirmMainContextJoin(
+	event: MessageEndEvent,
+	widget: UserAgentWidget,
+): MessageEndEventResult | undefined {
+	if (event.message.role !== "custom" || event.message.customType !== MESSAGE_TYPE) return;
+	const details = event.message.details as AgentCommandDetails | undefined;
+	if (!details?.agentId || details.mainContextState !== "will-join") return;
+	widget.confirmMainContextJoin(details.agentId);
+	details.mainContextState = "joined";
+	return {
+		message: {
+			...event.message,
+			details: { ...details, mainContextState: "joined" },
+		},
+	};
 }

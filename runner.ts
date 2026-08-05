@@ -143,6 +143,7 @@ function createRunningAgent(
 		task: parsed.task,
 		invocation,
 		notifyMainAgent: parsed.context,
+		mainContextState: parsed.context ? "will-join" : "separate",
 		status: "starting",
 		startedAt: Date.now(),
 		turnStartedAt: Date.now(),
@@ -340,6 +341,10 @@ async function runAgentLifecycle(
 		runningAgent.status = "error";
 		runningAgent.completedAt = Date.now();
 		runningAgent.error = message;
+		if (runningAgent.notifyMainAgent && isShuttingDown()) {
+			runningAgent.mainContextState = "separate";
+			return;
+		}
 		const resultMessage = buildAgentResultMessage(
 			runningAgent,
 			{ ok: false, error: message },
@@ -379,6 +384,7 @@ export async function runChildTurns(
 		if (runningAgent.interruptRequested) {
 			const response = interruptedTurnResponse(session, turnMessageStart);
 			runningAgent.interruptRequested = false;
+			runningAgent.mainContextState = "separate";
 			runningAgent.status = "done-waiting-to-post";
 			runningAgent.completedAt = Date.now();
 			runningAgent.responseText = response;
@@ -415,6 +421,11 @@ export async function runChildTurns(
 			{ display: runningAgent.notifyMainAgent },
 		);
 		if (runningAgent.notifyMainAgent) {
+			if (isShuttingDown()) {
+				runningAgent.mainContextState = "separate";
+				resultMessage.details.mainContextState = "separate";
+				return;
+			}
 			widget.addCompleted(runningAgent, resultMessage, { joinable: false });
 			const posted = postUserAgentResult(pi, isShuttingDown, true, resultMessage);
 			runningAgent.status = posted ? "posted" : runningAgent.status;
@@ -490,6 +501,7 @@ export function waitForInstruction(
 		};
 		agent.resume = (instruction) => {
 			logSteering(agent.id, "agent-resumed", { instructionLength: instruction.length });
+			agent.mainContextState = agent.notifyMainAgent ? "will-join" : "separate";
 			agent.status = "running";
 			agent.turnStartedAt = Date.now();
 			agent.completedAt = undefined;

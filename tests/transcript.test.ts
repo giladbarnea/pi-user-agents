@@ -6,7 +6,11 @@ import type {
 	RunningAgent,
 	Theme,
 } from "../shared.js";
-import { buildAgentResultMessage, registerUserAgentRenderer } from "../transcript.js";
+import {
+	buildAgentResultMessage,
+	formatStartNotification,
+	registerUserAgentRenderer,
+} from "../transcript.js";
 
 function completedAgent(): RunningAgent {
 	return {
@@ -18,8 +22,10 @@ function completedAgent(): RunningAgent {
 		task: "review the migration",
 		invocation: "/agent review the migration",
 		notifyMainAgent: false,
+		mainContextState: "separate",
 		status: "posted",
 		startedAt: 1_000,
+		turnStartedAt: 1_000,
 		completedAt: 2_000,
 		activeTools: new Map<string, string>(),
 		toolUses: 2,
@@ -29,6 +35,16 @@ function completedAgent(): RunningAgent {
 		finished: Promise.resolve(),
 	};
 }
+
+describe("agent chat events", () => {
+	test("the start event shows only a scheduled main-context join", () => {
+		const agent = completedAgent();
+		expect(formatStartNotification(agent)).not.toContain("join context");
+
+		agent.mainContextState = "will-join";
+		expect(formatStartNotification(agent)).toContain("will join context");
+	});
+});
 
 describe("buildAgentResultMessage", () => {
 	test("builds one canonical payload whose visible and hidden forms differ only by display", () => {
@@ -73,15 +89,23 @@ describe("completed agent transcript card", () => {
 			bold: (text: string) => text,
 			fg: (_color: string, text: string) => text,
 		} as Theme;
-		const output = renderEntry?.(
+		const component = renderEntry?.(
 			{ data: { content: message.content, details: message.details } },
 			{},
 			identityTheme,
-		)
-			?.render(120)
-			.join("\n");
+		);
+		const output = component?.render(120).join("\n");
 
 		expect(output).toContain("⎿  Almost. One stale instruction remains.");
 		expect(output).not.toContain("**Almost.**");
+		expect(output).not.toContain("join context");
+
+		message.details.mainContextState = "will-join";
+		const pendingOutput = component?.render(120).join("\n");
+		expect(pendingOutput).toContain("will join context");
+
+		message.details.mainContextState = "joined";
+		const joinedOutput = component?.render(120).join("\n");
+		expect(joinedOutput).toContain("joined context");
 	});
 });

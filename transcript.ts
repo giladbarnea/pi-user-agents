@@ -1,5 +1,5 @@
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Text } from "@earendil-works/pi-tui";
+import { type Component, Container, Markdown, Text } from "@earendil-works/pi-tui";
 import type {
 	AgentCommandDetails,
 	AgentCommandName,
@@ -17,6 +17,7 @@ import {
 	formatMs,
 	formatToolUses,
 	formatTurns,
+	mainContextLabel,
 	MESSAGE_TYPE,
 	truncatePlain,
 } from "./shared.js";
@@ -50,7 +51,9 @@ export function reportCommandError(
 
 export function buildMessageDetails(agent: RunningAgent, ok: boolean): AgentCommandDetails {
 	return {
+		agentId: agent.id,
 		command: agent.command,
+		mainContextState: agent.mainContextState,
 		inheritedContext: agent.inheritedContext,
 		model: agent.model,
 		modelLabel: agent.modelLabel,
@@ -136,16 +139,44 @@ export function formatCommandErrorMessage(
 }
 
 export function formatStartNotification(agent: RunningAgent): string {
-	return `Started /${agent.command} · ${agent.modelLabel} · ${contextLabel(agent.inheritedContext)}`;
+	return [
+		`Started /${agent.command}`,
+		agent.modelLabel,
+		contextLabel(agent.inheritedContext),
+		mainContextLabel(agent.mainContextState),
+	]
+		.filter(Boolean)
+		.join(" · ");
 }
 
 export function registerUserAgentRenderer(pi: ExtensionAPI): void {
 	pi.registerMessageRenderer<AgentCommandDetails>(MESSAGE_TYPE, (message, _options, theme) =>
-		renderAgentCard(customMessageContentText(message.content), message.details, theme),
+		liveAgentCard(
+			() => customMessageContentText(message.content),
+			() => message.details,
+			theme,
+		),
 	);
 	pi.registerEntryRenderer<AgentEntryData>(MESSAGE_TYPE, (entry, _options, theme) =>
-		entry.data ? renderAgentCard(entry.data.content, entry.data.details, theme) : undefined,
+		entry.data
+			? liveAgentCard(
+					() => entry.data!.content,
+					() => entry.data!.details,
+					theme,
+				)
+			: undefined,
 	);
+}
+
+function liveAgentCard(
+	content: () => string,
+	details: () => AgentCommandDetails | undefined,
+	theme: Theme,
+): Component {
+	return {
+		render: (width) => renderAgentCard(content(), details(), theme).render(width),
+		invalidate: () => undefined,
+	};
 }
 
 function renderAgentCard(
@@ -200,6 +231,8 @@ function buildRendererParts(content: string, details: AgentCommandDetails | unde
 	if (details?.modelLabel) parts.push(details.modelLabel);
 	else if (details?.model) parts.push(details.model);
 	if (details) parts.push(contextLabel(details.inheritedContext));
+	const mainContext = mainContextLabel(details?.mainContextState);
+	if (mainContext) parts.push(mainContext);
 	if (details?.turnCount) parts.push(formatTurns(details.turnCount));
 	if (details?.toolUses) parts.push(formatToolUses(details.toolUses));
 	if (details?.durationMs !== undefined) parts.push(formatMs(details.durationMs));

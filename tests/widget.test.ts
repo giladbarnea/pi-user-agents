@@ -30,7 +30,9 @@ type ContextUsage = ReturnType<NonNullable<RunningAgent["session"]>["getContextU
 
 function renderRunningHeader(
 	contextUsage: ContextUsage,
-	overrides: Partial<Pick<RunningAgent, "startedAt" | "turnStartedAt">> = {},
+	overrides: Partial<
+		Pick<RunningAgent, "startedAt" | "turnStartedAt" | "mainContextState">
+	> = {},
 ): string {
 	const now = Date.now();
 	const runningAgent = {
@@ -42,6 +44,7 @@ function renderRunningHeader(
 		task: "plan the migration",
 		invocation: "/agent plan the migration",
 		notifyMainAgent: false,
+		mainContextState: overrides.mainContextState ?? "separate",
 		status: "running",
 		startedAt: overrides.startedAt ?? now,
 		turnStartedAt: overrides.turnStartedAt ?? now,
@@ -92,6 +95,14 @@ describe("UserAgentWidget context meter", () => {
 
 	test("renders no meter when runtime context usage is unavailable", () => {
 		expect(renderRunningHeader(undefined)).not.toMatch(/[▁▂▃▄▅▆▇█]/);
+	});
+});
+
+describe("UserAgentWidget main-context state", () => {
+	test("renders a scheduled join while the response is in flight", () => {
+		const header = renderRunningHeader(undefined, { mainContextState: "will-join" });
+
+		expect(header).toContain("will join context");
 	});
 });
 
@@ -344,6 +355,7 @@ describe("UserAgentWidget completed overlay", () => {
 			task: "finish the task",
 			invocation: "/agent-isolated finish the task",
 			notifyMainAgent: false,
+			mainContextState: "separate",
 			status: "posted",
 			startedAt: Date.now() - 1_000,
 			turnStartedAt: Date.now() - 1_000,
@@ -489,6 +501,7 @@ function buildIdleHarness(): IdleHarness {
 		task: "hello how are you?",
 		invocation: "/agent hello how are you?",
 		notifyMainAgent: false,
+		mainContextState: "separate",
 		status: "idle",
 		startedAt: Date.now() - 60_000,
 		turnStartedAt: Date.now() - 3_000,
@@ -603,6 +616,7 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		expect(rendered).not.toContain("completed");
 		expect(rendered).toContain("3.0s");
 		expect(rendered).not.toContain("1m");
+		expect(rendered).not.toContain("join context");
 	});
 
 	test("Enter in the overlay steers an idle agent by resuming a new turn, not by queueing into the session", () => {
@@ -634,7 +648,14 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		expect(harness.agent.status).toBe("posted");
 		expect(harness.retireCalls()).toBe(1);
 		expect(viewer.render(100).join("\n")).not.toContain("j join");
-		const snapshotRow = harness.widgetComponent().render(120).join("\n");
+		expect(viewer.render(100).join("\n")).toContain("will join context");
+		let snapshotRow = harness.widgetComponent().render(120).join("\n");
+		expect(snapshotRow).toContain("will join context");
+
+		expect(harness.widget.confirmMainContextJoin(harness.agent.id)).toBe(true);
+		expect(viewer.render(100).join("\n")).toContain("joined context");
+		snapshotRow = harness.widgetComponent().render(120).join("\n");
+		expect(snapshotRow).toContain("joined context");
 		expect(snapshotRow).toContain("/agent");
 		expect(snapshotRow).toContain("3.0s");
 		expect(snapshotRow).not.toContain("1m");
