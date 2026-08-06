@@ -15,7 +15,7 @@ longer be registered.
 ## Sources
 
 - `../rich-tool-diff/` — `read`, `edit`, `write`, `grep`, `find`, `ls`.
-- `../bash-rich-highlight.ts` — `bash`.
+- `/Users/giladbarnea/.pi/agent/extensions/bash-rich-highlight/index.ts` — `bash`.
 
 Both are **disabled** in committed `agent/settings.json`, while `pi-user-agents` is enabled.
 Nothing here imports from either at runtime. The code was copied and adapted, by request.
@@ -66,7 +66,7 @@ last need for a `cwd` argument.
 
 ### highlight.js
 
-`bash-rich-highlight.ts` imports highlight.js through an absolute path inside the global Pi
+`bash-rich-highlight/index.ts` imports highlight.js through an absolute path inside the global Pi
 installation, then hand-parses its HTML output into ANSI — about 180 lines. That import breaks
 when the installation prefix or the Pi version changes. Pi's own exported
 `highlightCode(command, "bash")` returns `string[]` directly.

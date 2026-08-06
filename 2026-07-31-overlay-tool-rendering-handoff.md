@@ -14,7 +14,7 @@ The user likes the built-in tool presentation in:
 
 A separate extension provides the preferred pure Bash presentation:
 
-`/Users/giladbarnea/.pi/agent/extensions/bash-rich-highlight.ts`
+`/Users/giladbarnea/.pi/agent/extensions/bash-rich-highlight/index.ts`
 
 The user does not want extension reuse or shared dependencies. The eventual implementation may copy and adapt code directly into `pi-user-agents`.
 
@@ -64,7 +64,7 @@ The safer boundary is a local historical renderer inside `pi-user-agents`. It sh
 
 The extension does not provide a universal renderer for every tool. It gives each supported tool a compact call summary and a purpose-built result view. The retained agent context contains the detailed rendering inventory for these six tools, including path treatment, counts, ranges, mutation previews, and diffs.
 
-Bash presentation comes from `bash-rich-highlight.ts`, not `rich-tool-diff`.
+Bash presentation comes from `bash-rich-highlight/index.ts`, not `rich-tool-diff`.
 
 ### The proposed coverage is first-class known tools plus a fallback
 

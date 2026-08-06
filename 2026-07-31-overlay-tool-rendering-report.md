@@ -62,7 +62,7 @@ A second site uses the same raw call presentation. `describeAssistantPart()` in 
 5. `find`
 6. `ls`
 
-`bash-rich-highlight.ts` covers the seventh tool, `bash`.
+`bash-rich-highlight/index.ts` covers the seventh tool, `bash`.
 
 Neither source handles MCP tools, arbitrary custom tools, `apply_patch`, or `tool_batch`. `rich-tool-diff/FORK.md` deliberately excludes its upstream generic renderer. There is no universal renderer to copy.
 
@@ -70,18 +70,18 @@ The recommended first-class scope is therefore these seven tools. Every other to
 
 ## The implementation must vendor the rendering code locally
 
-Create one self-contained historical rendering module inside `pi-user-agents`. Do not import from `rich-tool-diff/` or `bash-rich-highlight.ts` at runtime.
+Create one self-contained historical rendering module inside `pi-user-agents`. Do not import from `rich-tool-diff/` or `bash-rich-highlight/index.ts` at runtime.
 
 This boundary follows the user's explicit copy-and-adapt preference. It also avoids coupling an enabled extension to two disabled extensions.
 
 Both source extensions are disabled in committed `agent/settings.json`:
 
 - `-extensions/rich-tool-diff/index.ts`
-- `-extensions/bash-rich-highlight.ts`
+- `-extensions/bash-rich-highlight/index.ts`
 
 `pi-user-agents` remains enabled. Pi's package manager maps the `-` prefix to `forceExcludes` and `enabled = false` in `dist/core/package-manager.js:519,527`.
 
-`bash-rich-highlight.ts` already imports five modules from `rich-tool-diff`: `ansi`, `diff`, `glyphs`, `text`, and `theme`. Copying Bash presentation alone is therefore not a smaller dependency path.
+`bash-rich-highlight/index.ts` already imports five modules from `rich-tool-diff`: `ansi`, `diff`, `glyphs`, `text`, and `theme`. Copying Bash presentation alone is therefore not a smaller dependency path.
 
 Copy and adapt:
 
@@ -91,7 +91,7 @@ Copy and adapt:
 - `text.ts`
 - `diff.ts`
 - the renderer bodies from `tools.ts`
-- the relevant renderer bodies from `bash-rich-highlight.ts`
+- the relevant renderer bodies from `bash-rich-highlight/index.ts`
 
 Do not copy:
 
@@ -175,7 +175,7 @@ Keep existing truncation-summary handling. Built-in result details make its stru
 
 The overlay has a separate `bashExecution` message role, but Pi documents that role as the interactive `!` command. A headless child agent does not use that command.
 
-`bash-rich-highlight.ts` registers an ordinary tool named `bash`. Agent Bash activity therefore appears as a normal `ToolCall` and `ToolResultMessage` pair.
+`bash-rich-highlight/index.ts` registers an ordinary tool named `bash`. Agent Bash activity therefore appears as a normal `ToolCall` and `ToolResultMessage` pair.
 
 Use the same first-class historical path for all seven tools. Leave the overlay's existing `bashExecution` branch alone.
 
@@ -272,7 +272,7 @@ Confirmed Pi TUI exports include:
 
 `normalizeTerminalOutput` does not exist in Pi TUI. `text.ts` guards for it and falls back to replacing tabs. Do not build the copied renderer around that missing function.
 
-`bash-rich-highlight.ts:4` imports highlight.js through an absolute path inside the global Pi installation. Do not reproduce that dependency. It breaks when the installation prefix or Pi version changes.
+`bash-rich-highlight/index.ts:4` imports highlight.js through an absolute path inside the global Pi installation. Do not reproduce that dependency. It breaks when the installation prefix or Pi version changes.
 
 ## Implementation-ready decisions
 
