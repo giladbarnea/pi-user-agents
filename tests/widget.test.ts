@@ -633,7 +633,7 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		expect(rendered).not.toContain("join context");
 	});
 
-	test("renders the same live context meter in the widget and overlay headers", () => {
+	test("reuses the live context meter as overlay metadata", () => {
 		const harness = buildIdleHarness({ tokens: 100_000, contextWindow: 200_000, percent: 50 });
 		const meter = renderContextMeter(50, meterTheme);
 		const widgetHeader =
@@ -642,10 +642,11 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		const overlayHeader =
 			harness.viewer().render(100).find((line) => line.includes("/agent")) ?? "";
 
-		for (const header of [widgetHeader, overlayHeader]) {
-			expect(header.indexOf("/agent")).toBeLessThan(header.indexOf(meter));
-			expect(header.indexOf(meter)).toBeLessThan(header.indexOf("hello how are you?"));
-		}
+		expect(widgetHeader.indexOf("/agent")).toBeLessThan(widgetHeader.indexOf(meter));
+		expect(widgetHeader.indexOf(meter)).toBeLessThan(
+			widgetHeader.indexOf("hello how are you?"),
+		);
+		expect(overlayHeader).toContain(`model · ${meter} · idle`);
 	});
 
 	test("Enter in the overlay steers an idle agent by resuming a new turn, not by queueing into the session", () => {
