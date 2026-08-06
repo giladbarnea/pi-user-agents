@@ -1,8 +1,8 @@
 # pi-user-agents
 
-Your main agent doesn't need to know everything.
+You deserve your own agents, too. It's only fair.
 
-`pi-user-agents` gives the **user** powerful buttons and levers to run, view and control background agents.
+`pi-user-agents` gives the **user** powerful pulls and levers to run, view and control background agents.
 
 ## Simplest use case
 
@@ -89,7 +89,7 @@ Each agent row places a one-cell context meter between the command and its promp
      ⎿  Loaded several large Pi source and documentation...
 ```
 
-The meter shows how much of that child agent's selected model context window is in use. It has eight 12.5% bins—`▁▂▃▄▅▆▇█`—and shifts from white toward red as the context fills. Completed rows retain their final reading. The extension reads Pi's resolved model and live session context usage, so model-specific limits and configured `contextWindow` overrides are respected; when Pi cannot provide a usage percentage, the meter is omitted rather than guessed.
+The meter shows how much of that child agent's selected model context window is in use. Its nine levels run from an empty cell through `▁▂▃▄▅▆▇█`, matching the custom footer's fill scale. Its colors also match the footer's stages: dim below 40%, muted at 40%, warning at 65%, and error at 85%. This value belongs to the child session, so it can differ from the main session's footer after the child does more work. Completed rows retain their final reading. The extension reads Pi's resolved model and live session context usage, so model-specific limits and configured `contextWindow` overrides are respected; when Pi cannot provide a usage percentage, the meter is omitted rather than guessed.
 
 The overlay shows the agent's full rolling conversation — user prompts, assistant turns, tool calls, and tool results — and follows the tail while the agent streams. Scroll up to pause following; `End` resumes it. Once a turn of a run launched without `-j` has completed, press `j` to join its original invocation and latest response into the main context.
 

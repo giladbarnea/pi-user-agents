@@ -7,22 +7,35 @@ import type {
 	Theme,
 	UIContext,
 } from "../shared.js";
-import { renderContextMeter, UserAgentWidget } from "../widget.ts";
+import { contextMeterColor, renderContextMeter, UserAgentWidget } from "../widget.ts";
+
+const meterTheme = {
+	fg: (_color: string, text: string) => text,
+} as Pick<Theme, "fg">;
 
 describe("renderContextMeter", () => {
-	test("fills from the shortest white block to a full red block", () => {
-		expect(renderContextMeter(0)).toBe("\x1b[38;2;255;255;255m▁\x1b[39m");
-		expect(renderContextMeter(100)).toBe("\x1b[38;2;255;0;0m█\x1b[39m");
+	test("fills from an empty cell to a full block", () => {
+		expect(renderContextMeter(0, meterTheme)).toBe(" ");
+		expect(renderContextMeter(100, meterTheme)).toBe("█");
 	});
 
-	test("maps context usage into exactly eight visible percentage bins", () => {
-		const meters = Array.from({ length: 8 }, (_, index) => renderContextMeter(index * 12.5));
-		const symbols = meters.map((meter) => meter.replace(/\x1b\[[0-9;]*m/g, ""));
+	test("matches the custom footer's nine visual levels", () => {
+		const meters = [0, 12, 23, 34, 45, 56, 67, 78, 89].map((percent) =>
+			renderContextMeter(percent, meterTheme),
+		);
 
-		expect(symbols).toEqual(["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]);
-		expect(new Set(meters).size).toBe(8);
-		expect(renderContextMeter(null)).toBe("");
-		expect(renderContextMeter(undefined)).toBe("");
+		expect(meters).toEqual([" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]);
+		expect(renderContextMeter(25, meterTheme)).toBe("▂");
+		expect(new Set(meters).size).toBe(9);
+		expect(renderContextMeter(null, meterTheme)).toBe("");
+		expect(renderContextMeter(undefined, meterTheme)).toBe("");
+	});
+
+	test("uses the custom footer's semantic color thresholds", () => {
+		expect(contextMeterColor(39.9)).toBe("dim");
+		expect(contextMeterColor(40)).toBe("muted");
+		expect(contextMeterColor(65)).toBe("warning");
+		expect(contextMeterColor(85)).toBe("error");
 	});
 });
 
@@ -87,7 +100,7 @@ function renderRunningHeader(
 describe("UserAgentWidget context meter", () => {
 	test("renders live SDK context usage between the command and user prompt", () => {
 		const header = renderRunningHeader({ tokens: 100_000, contextWindow: 200_000, percent: 50 });
-		const meter = renderContextMeter(50);
+		const meter = renderContextMeter(50, meterTheme);
 
 		expect(header.indexOf("/agent")).toBeLessThan(header.indexOf(meter));
 		expect(header.indexOf(meter)).toBeLessThan(header.indexOf("plan the migration"));
