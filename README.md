@@ -74,7 +74,9 @@ By default the entire run is invisible to the main agent: the invocation, the ch
 
 An agent launched without `-j` offers `j join` in its overlay once a turn has completed. Pressing it sends the latest invocation-and-result message to the main agent with the same trigger behavior as `-j`, and retires the agent's live session — joining is one of the two terminal actions, alongside dispose. The context-bearing message is hidden in the transcript because the original TUI-only result card is already visible. Joining is unavailable while the child is in flight, for runs launched with `-j`, and after a run has already been joined.
 
-The widget below the editor shows in-flight, turn-complete, and finished agents. Use `←` or `↓` to select it, `Enter` to open an agent overlay, and `x` to stop a running agent, dispose a turn-complete one, or dismiss a finished one.
+The widget below the editor shows in-flight, turn-complete, and finished agents. Use `←` or `↓` to select it, then press `Enter` to open an agent overlay.
+
+Press `x` once to start disposing any agent from the widget or its overlay. The hint changes to `x again to confirm` in the theme's error color. Press `x` again to dispose the agent.
 
 Press `Ctrl+x` on a selected running agent, or inside its overlay, to interrupt only the current turn. The agent becomes idle and remains available for steering, joining when applicable, or disposal.
 
@@ -97,7 +99,7 @@ The overlay shows the agent's full rolling conversation — user prompts, assist
 
 Press `Enter` in an agent's overlay to open the **Steer** input, and submit a message with `Enter`; `Esc` cancels the composer. While the agent is mid-turn, Pi queues the message after its current tool work, before its next model call. When the agent has completed its turn (green check), the same input starts **another turn** on the still-alive session — the entry flips back to a spinner, and on completion posts a fresh result card and returns to the steerable turn-complete state. Repeat as many times as needed.
 
-Turn completion no longer disposes the child session. Only three things do: pressing `x` on the agent, joining it with `j`, or ending the Pi session. A `-j` run is the exception — it delivers its result to the main agent on completion and ends there. After an error or a `-j` completion, the overlay remains available to read the captured transcript or copy the result, but it is no longer interactive.
+Turn completion no longer disposes the child session. Only three things do: confirming `x` on the agent, joining it with `j`, or ending the Pi session. A `-j` run is the exception — it delivers its result to the main agent on completion and ends there. After an error or a `-j` completion, the overlay remains available to read the captured transcript or copy the result, but it is no longer interactive.
 
 ## Result delivery — Pi SDK mental model
 

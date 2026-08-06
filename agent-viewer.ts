@@ -149,6 +149,7 @@ export class AgentViewer implements Component {
 	private autoScroll = true;
 	private lastWidth = 0;
 	private justCopied = false;
+	private confirmingDispose = false;
 	private composer: Input | undefined;
 	/** Rich tool rendering is far too costly to repeat on every 100 ms widget tick. */
 	private renderedContent: { key: string; lines: string[] } | undefined;
@@ -165,21 +166,24 @@ export class AgentViewer implements Component {
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "ctrl+x") && isLiveAgent(this.agent)) {
+			this.confirmingDispose = false;
 			this.interrupt();
 			this.tui.requestRender();
 			return;
 		}
 		if (this.composer) {
+			this.confirmingDispose = false;
 			this.composer.handleInput(data);
 			this.tui.requestRender();
 			return;
 		}
-		if (matchesKey(data, "escape") || matchesKey(data, "q")) {
-			this.done("hide");
+		if (matchesKey(data, "x")) {
+			this.requestDispose();
 			return;
 		}
-		if (matchesKey(data, "x") && !isLiveAgent(this.agent)) {
-			this.done("dispose");
+		this.confirmingDispose = false;
+		if (matchesKey(data, "escape") || matchesKey(data, "q")) {
+			this.done("hide");
 			return;
 		}
 		if (matchesKey(data, "enter") && this.canSteer()) {
@@ -304,7 +308,11 @@ export class AgentViewer implements Component {
 					this.canJoinMainContext() ? th.fg("dim", "j join") : "",
 					isLiveAgent(this.agent) ? th.fg("dim", "Ctrl+x interrupt") : "",
 					mainContext ? th.fg("dim", mainContext) : "",
-					th.fg("dim", isLiveAgent(this.agent) ? "Esc hide" : "x dispose"),
+					isLiveAgent(this.agent) ? th.fg("dim", "Esc hide") : "",
+					th.fg(
+						this.confirmingDispose ? "error" : "dim",
+						this.confirmingDispose ? "x again to confirm" : "x dispose",
+					),
 				].filter(Boolean),
 			);
 			lines.push(row(footer));
@@ -316,6 +324,15 @@ export class AgentViewer implements Component {
 	invalidate(): void {}
 
 	dispose(): void {}
+
+	private requestDispose(): void {
+		if (this.confirmingDispose) {
+			this.done("dispose");
+			return;
+		}
+		this.confirmingDispose = true;
+		this.tui.requestRender();
+	}
 
 	private copyResponse(): void {
 		const text =

@@ -134,7 +134,7 @@ describe("UserAgentWidget per-turn duration", () => {
 });
 
 describe("UserAgentWidget steering", () => {
-	test("Ctrl+x interrupts the selected running agent without disposing it", () => {
+	test("Ctrl+x interrupts and x confirms disposal for a selected running agent", () => {
 		let abortCalls = 0;
 		const session = {
 			isStreaming: true,
@@ -182,9 +182,16 @@ describe("UserAgentWidget steering", () => {
 
 		expect(abortCalls).toBe(1);
 		expect(runningAgent.aborted).toBeUndefined();
+
+		terminalInput("x");
+		expect(abortCalls).toBe(1);
+		expect(runningAgent.aborted).toBeUndefined();
+		terminalInput("x");
+		expect(abortCalls).toBe(2);
+		expect(runningAgent.aborted).toBe(true);
 	});
 
-	test("Ctrl+x interrupts the running agent from its overlay", () => {
+	test("Ctrl+x interrupts and x confirms disposal in the running agent overlay", () => {
 		let abortCalls = 0;
 		const session = {
 			isStreaming: true,
@@ -228,6 +235,7 @@ describe("UserAgentWidget steering", () => {
 		} as unknown as TUI;
 		let terminalInput = (_data: string): unknown => undefined;
 		let viewer: Component | undefined;
+		let viewerAction: "hide" | "dispose" | undefined;
 		const ui = {
 			onTerminalInput: (handler: typeof terminalInput) => {
 				terminalInput = handler;
@@ -240,11 +248,13 @@ describe("UserAgentWidget steering", () => {
 					tui: TUI,
 					theme: Theme,
 					keybindings: unknown,
-					done: (result: undefined) => void,
+					done: (result: "hide" | "dispose") => void,
 				) => Component,
 			) => {
-				viewer = factory(tui, theme, undefined, () => undefined);
-				return new Promise<undefined>(() => undefined);
+				viewer = factory(tui, theme, undefined, (action) => {
+					viewerAction = action;
+				});
+				return new Promise<"hide" | "dispose">(() => undefined);
 			},
 		} as unknown as UIContext;
 
@@ -255,10 +265,16 @@ describe("UserAgentWidget steering", () => {
 		if (!viewer) throw new Error("Agent viewer did not open");
 
 		expect(viewer.render(100).join("\n")).toContain("Ctrl+x interrupt");
+		expect(viewer.render(100).join("\n")).toContain("x dispose");
 		viewer.handleInput?.("\x18");
 
 		expect(abortCalls).toBe(1);
 		expect(runningAgent.aborted).toBeUndefined();
+		viewer.handleInput?.("x");
+		expect(viewerAction).toBeUndefined();
+		expect(viewer.render(100).join("\n")).toContain("x again to confirm");
+		viewer.handleInput?.("x");
+		expect(viewerAction).toBe("dispose");
 	});
 
 	test("resumes following the transcript tail when steering is committed", () => {
@@ -452,6 +468,9 @@ describe("UserAgentWidget completed overlay", () => {
 		terminalInput("\r");
 		if (!viewer) throw new Error("Completed agent viewer did not reopen");
 		viewer.handleInput?.("x");
+		expect(viewer.render(100).join("\n")).toContain("x again to confirm");
+		expect(widgetComponent.render(100).join("\n")).toContain("/agent");
+		viewer.handleInput?.("x");
 		await Promise.resolve();
 		expect(widgetComponent.render(100)).toEqual([]);
 	});
@@ -468,6 +487,7 @@ type IdleHarness = {
 	steeredMessages: string[];
 	resumedInstructions: string[];
 	retireCalls: () => number;
+	foregroundCalls: Array<{ color: string; text: string }>;
 	settleViewer: () => Promise<void>;
 };
 
@@ -537,8 +557,12 @@ function buildIdleHarness(contextUsage: ContextUsage = undefined): IdleHarness {
 	} satisfies RunningAgent;
 	const joinedResults: AgentResultMessage[] = [];
 	const widget = new UserAgentWidget(new Set([agent]), (message) => joinedResults.push(message));
+	const foregroundCalls: Array<{ color: string; text: string }> = [];
 	const theme = {
-		fg: (_color: string, text: string) => text,
+		fg: (color: string, text: string) => {
+			foregroundCalls.push({ color, text });
+			return text;
+		},
 		bold: (text: string) => text,
 		italic: (text: string) => text,
 		underline: (text: string) => text,
@@ -600,6 +624,7 @@ function buildIdleHarness(contextUsage: ContextUsage = undefined): IdleHarness {
 		steeredMessages,
 		resumedInstructions,
 		retireCalls: () => retired,
+		foregroundCalls,
 		settleViewer: async () => {
 			await viewerDone;
 		},
@@ -698,6 +723,13 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 
 		expect(viewer.render(100).join("\n")).toContain("x dispose");
 		viewer.handleInput?.("x");
+		expect(viewer.render(100).join("\n")).toContain("x again to confirm");
+		expect(harness.foregroundCalls).toContainEqual({
+			color: "error",
+			text: "x again to confirm",
+		});
+		expect(harness.agent.aborted).toBeUndefined();
+		viewer.handleInput?.("x");
 		await harness.settleViewer();
 
 		expect(harness.agent.aborted).toBe(true);
@@ -709,6 +741,13 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		expect(harness.widgetComponent().render(120).join("\n")).toContain("/agent");
 
 		harness.sendWidgetKey("\x1b[B");
+		harness.sendWidgetKey("x");
+		expect(harness.widgetComponent().render(120).join("\n")).toContain("x again to confirm");
+		expect(harness.foregroundCalls).toContainEqual({
+			color: "error",
+			text: "x again to confirm",
+		});
+		expect(harness.agent.aborted).toBeUndefined();
 		harness.sendWidgetKey("x");
 
 		expect(harness.agent.aborted).toBe(true);

@@ -49,6 +49,7 @@ export class UserAgentWidget {
 	private active = false;
 	private selectedIndex = 0;
 	private viewerOpen = false;
+	private disposeConfirmationTarget: ViewableAgent | undefined;
 	private readonly completedAgents: CompletedAgent[] = [];
 
 	constructor(
@@ -62,6 +63,7 @@ export class UserAgentWidget {
 		this.ui = ui;
 		this.widgetRegistered = false;
 		this.tui = undefined;
+		this.disposeConfirmationTarget = undefined;
 		this.inputUnsub = ui.onTerminalInput((data) => this.handleKey(data));
 	}
 
@@ -138,6 +140,7 @@ export class UserAgentWidget {
 		this.widgetRegistered = false;
 		this.tui = undefined;
 		this.active = false;
+		this.disposeConfirmationTarget = undefined;
 	}
 
 	private clear(): void {
@@ -152,6 +155,7 @@ export class UserAgentWidget {
 		}
 		this.active = false;
 		this.selectedIndex = 0;
+		this.disposeConfirmationTarget = undefined;
 	}
 
 	private runningAgentsForWidget(): RunningAgent[] {
@@ -195,11 +199,13 @@ export class UserAgentWidget {
 		}
 
 		if (matchesKey(data, "down")) {
+			this.disposeConfirmationTarget = undefined;
 			this.selectedIndex = Math.min(entries.length - 1, this.selectedIndex + 1);
 			this.update();
 			return { consume: true };
 		}
 		if (matchesKey(data, "up")) {
+			this.disposeConfirmationTarget = undefined;
 			if (this.selectedIndex === 0) {
 				this.deactivate();
 				return { consume: true };
@@ -219,16 +225,19 @@ export class UserAgentWidget {
 			selected?.kind === "running" &&
 			isLiveAgent(selected.agent)
 		) {
+			this.disposeConfirmationTarget = undefined;
 			this.interruptRunning(selected.agent);
 			return { consume: true };
 		}
 		if (matchesKey(data, "enter")) {
+			this.disposeConfirmationTarget = undefined;
 			if (selected) this.openSelected(selected.agent);
 			return { consume: true };
 		}
-		if (matchesKey(data, "x")) {
-			if (selected?.kind === "running") this.closeRunning(selected.agent);
-			else if (selected?.kind === "completed") this.dismissCompleted(selected.agent);
+		if (matchesKey(data, "x") && selected) {
+			if (!this.confirmDispose(selected.agent)) return { consume: true };
+			if (selected.kind === "running") this.closeRunning(selected.agent);
+			else this.dismissCompleted(selected.agent);
 			return { consume: true };
 		}
 
@@ -236,9 +245,20 @@ export class UserAgentWidget {
 		return undefined;
 	}
 
+	private confirmDispose(target: ViewableAgent): boolean {
+		if (this.disposeConfirmationTarget === target) {
+			this.disposeConfirmationTarget = undefined;
+			return true;
+		}
+		this.disposeConfirmationTarget = target;
+		this.update();
+		return false;
+	}
+
 	private deactivate(): void {
 		this.active = false;
 		this.selectedIndex = 0;
+		this.disposeConfirmationTarget = undefined;
 		this.update();
 	}
 
@@ -389,17 +409,29 @@ export class UserAgentWidget {
 				width,
 			),
 		];
-		let hint: string;
-		if (!this.active) hint = "←/↓ select agent";
-		else {
+		if (!this.active) {
+			lines.push(truncateToWidth(`  ${theme.fg("dim", "←/↓ select agent")}`, width));
+		} else {
 			const selected = entries[this.selectedIndex];
-			const interrupt =
-				selected?.kind === "running" && isLiveAgent(selected.agent)
-					? " · Ctrl+x interrupt"
-					: "";
-			hint = `↑↓ select · Enter view${interrupt} · x dispose · Esc back`;
+			const confirmingDispose = this.disposeConfirmationTarget === selected?.agent;
+			const segments = [theme.fg("accent", "↑↓ select"), theme.fg("accent", "Enter view")];
+			if (
+				!confirmingDispose &&
+				selected?.kind === "running" &&
+				isLiveAgent(selected.agent)
+			)
+				segments.push(theme.fg("accent", "Ctrl+x interrupt"));
+			segments.push(
+				theme.fg(
+					confirmingDispose ? "error" : "accent",
+					confirmingDispose ? "x again to confirm" : "x dispose",
+				),
+				theme.fg("accent", "Esc back"),
+			);
+			lines.push(
+				truncateToWidth(`  ${segments.join(theme.fg("accent", " · "))}`, width),
+			);
 		}
-		lines.push(truncateToWidth(`  ${theme.fg(this.active ? "accent" : "dim", hint)}`, width));
 
 		const maxEntries = Math.max(1, Math.floor((MAX_WIDGET_LINES - lines.length) / 2));
 		const start = this.active
