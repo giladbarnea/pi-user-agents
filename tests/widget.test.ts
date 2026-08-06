@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Component, TUI } from "@earendil-works/pi-tui";
+import { contextMeterColor, renderContextMeter } from "../context-meter.ts";
 import type {
 	AgentMessage,
 	AgentResultMessage,
@@ -7,7 +8,7 @@ import type {
 	Theme,
 	UIContext,
 } from "../shared.js";
-import { contextMeterColor, renderContextMeter, UserAgentWidget } from "../widget.ts";
+import { UserAgentWidget } from "../widget.ts";
 
 const meterTheme = {
 	fg: (_color: string, text: string) => text,
@@ -470,7 +471,7 @@ type IdleHarness = {
 	settleViewer: () => Promise<void>;
 };
 
-function buildIdleHarness(): IdleHarness {
+function buildIdleHarness(contextUsage: ContextUsage = undefined): IdleHarness {
 	const messages = [
 		{ role: "user", content: [{ type: "text", text: "hello how are you?" }], timestamp: 1 },
 		{
@@ -488,7 +489,7 @@ function buildIdleHarness(): IdleHarness {
 			steeredMessages.push(message);
 		},
 		abort: async () => undefined,
-		getContextUsage: () => undefined,
+		getContextUsage: () => contextUsage,
 	} as unknown as NonNullable<RunningAgent["session"]>;
 	const resumedInstructions: string[] = [];
 	let retired = 0;
@@ -630,6 +631,21 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		expect(rendered).toContain("3.0s");
 		expect(rendered).not.toContain("1m");
 		expect(rendered).not.toContain("join context");
+	});
+
+	test("renders the same live context meter in the widget and overlay headers", () => {
+		const harness = buildIdleHarness({ tokens: 100_000, contextWindow: 200_000, percent: 50 });
+		const meter = renderContextMeter(50, meterTheme);
+		const widgetHeader =
+			harness.widgetComponent().render(100).find((line) => line.includes("/agent")) ?? "";
+		harness.openViewer();
+		const overlayHeader =
+			harness.viewer().render(100).find((line) => line.includes("/agent")) ?? "";
+
+		for (const header of [widgetHeader, overlayHeader]) {
+			expect(header.indexOf("/agent")).toBeLessThan(header.indexOf(meter));
+			expect(header.indexOf(meter)).toBeLessThan(header.indexOf("hello how are you?"));
+		}
 	});
 
 	test("Enter in the overlay steers an idle agent by resuming a new turn, not by queueing into the session", () => {

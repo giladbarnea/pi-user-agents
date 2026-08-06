@@ -20,6 +20,7 @@ import type {
 	Theme,
 	UIContext,
 } from "./shared.js";
+import { renderAgentContextMeter } from "./context-meter.js";
 import {
 	describeToolCall,
 	indexToolMessages,
@@ -60,33 +61,6 @@ const ANSI_SEQUENCE_PATTERN = "\\x1b\\[[0-?]*[ -/]*[@-~]";
 const LEADING_RENDERED_WHITESPACE = new RegExp(`^((?:${ANSI_SEQUENCE_PATTERN})*)\\s+`);
 const TRAILING_RENDERED_WHITESPACE = new RegExp(`\\s+((?:${ANSI_SEQUENCE_PATTERN})*)$`);
 const MIDDLE_TRUNCATION_PLACEHOLDER = "…";
-const CONTEXT_METER_SYMBOLS = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
-const CONTEXT_MUTED_THRESHOLD = 40;
-const CONTEXT_WARNING_THRESHOLD = 65;
-const CONTEXT_ERROR_THRESHOLD = 85;
-
-type ContextMeterColor = "dim" | "muted" | "warning" | "error";
-
-/** @example contextMeterColor(85) // "error" */
-export function contextMeterColor(percent: number): ContextMeterColor {
-	if (percent >= CONTEXT_ERROR_THRESHOLD) return "error";
-	if (percent >= CONTEXT_WARNING_THRESHOLD) return "warning";
-	if (percent >= CONTEXT_MUTED_THRESHOLD) return "muted";
-	return "dim";
-}
-
-export function renderContextMeter(
-	percent: number | null | undefined,
-	theme: Pick<Theme, "fg">,
-): string {
-	if (percent === null || percent === undefined) return "";
-	const boundedPercent = Math.max(0, Math.min(100, percent));
-	const level = Math.min(
-		CONTEXT_METER_SYMBOLS.length - 1,
-		Math.floor(boundedPercent / (100 / CONTEXT_METER_SYMBOLS.length)),
-	);
-	return theme.fg(contextMeterColor(boundedPercent), CONTEXT_METER_SYMBOLS[level]);
-}
 
 export class UserAgentWidget {
 	private ui: UIContext | undefined;
@@ -511,10 +485,7 @@ export class UserAgentWidget {
 			marker,
 			icon,
 			theme.bold(`/${agent.command}`),
-			renderContextMeter(
-				running ? agent.session?.getContextUsage()?.percent : agent.contextPercent,
-				theme,
-			),
+			renderAgentContextMeter(agent, theme),
 			theme.fg("muted", truncatePlain(agent.task, 52)),
 			theme.fg("dim", "·"),
 			theme.fg("dim", parts.join(" · ")),
@@ -735,11 +706,17 @@ class AgentViewer implements Component {
 		);
 		const status = live ? "running" : idle ? "idle" : failed ? "failed" : "completed";
 		const meta = `${this.agent.modelLabel} · ${status} · ${stats.join(" · ")}`;
-		lines.push(
-			row(
-				`${icon} ${th.bold(`/${this.agent.command}`)}  ${th.fg("muted", truncatePlain(this.agent.task, 60))} ${th.fg("dim", "·")} ${th.fg("dim", meta)}`,
-			),
-		);
+		const header = [
+			icon,
+			th.bold(`/${this.agent.command}`),
+			renderAgentContextMeter(this.agent, th),
+			th.fg("muted", truncatePlain(this.agent.task, 60)),
+			th.fg("dim", "·"),
+			th.fg("dim", meta),
+		]
+			.filter(Boolean)
+			.join(" ");
+		lines.push(row(header));
 		lines.push(hrMid);
 
 		const content = this.contentLines(innerW);
