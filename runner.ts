@@ -371,7 +371,7 @@ export async function runChildTurns(
 	runningAgent: RunningAgent,
 	widget: UserAgentWidget,
 ): Promise<void> {
-	let instruction = `You are running in an ephemeral, forked background process now. ${task}`;
+	let instruction = `You are running in an ephemeral, forked background process now, concurrently with the main session. ${task}`;
 	while (true) {
 		const turnMessageStart = session.agent.state.messages.length;
 		if (!runningAgent.interruptRequested) {
