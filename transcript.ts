@@ -112,9 +112,7 @@ const JOINED_CONVERSATION_PREFACE =
 	"The user has dispatched a background sub-agent with a task. The sub-agent is done. The following is the back and forth between them:";
 
 export function formatResultMessage(agent: RunningAgent): string {
-	if (!agent.session) throw new Error("Cannot join a user agent without its child session");
-	const transcript = agent.session.agent.state.messages.slice(agent.inheritedMessageCount);
-	const messages = selectJoinedMessages(transcript);
+	const messages = selectJoinedMessages(agent.conversationMessages);
 	const lines = [
 		JOINED_CONVERSATION_PREFACE,
 		`<user_agent model="${escapeAttribute(agent.model)}" inherited_context="${agent.inheritedContext}">`,

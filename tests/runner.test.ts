@@ -693,7 +693,7 @@ describe("runChildTurns — main-context delivery", () => {
 			toolUses: 0,
 			turnCount: 0,
 			responseText: "",
-			inheritedMessageCount: 0,
+			conversationMessages: [],
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
@@ -778,7 +778,7 @@ describe("runChildTurns — main-context delivery", () => {
 			toolUses: 0,
 			turnCount: 0,
 			responseText: "",
-			inheritedMessageCount: 0,
+			conversationMessages: [],
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;

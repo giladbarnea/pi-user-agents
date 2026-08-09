@@ -26,7 +26,7 @@ function completedJoin(): {
 		toolUses: 0,
 		turnCount: 1,
 		responseText: "done",
-		inheritedMessageCount: 0,
+		conversationMessages: [],
 		finished: Promise.resolve(),
 	} satisfies RunningAgent;
 	const message: AgentResultMessage = {

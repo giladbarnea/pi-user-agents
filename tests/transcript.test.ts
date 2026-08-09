@@ -35,7 +35,13 @@ function completedAgent(): RunningAgent {
 		toolUses: 2,
 		turnCount: 1,
 		responseText: "migration reviewed",
-		inheritedMessageCount: 0,
+		conversationMessages: [
+			{ role: "user", content: "review the migration" },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "migration reviewed" }],
+			},
+		] as AgentMessage[],
 		session: {
 			agent: {
 				state: {
@@ -142,6 +148,7 @@ describe("buildAgentResultMessage", () => {
 			{ role: "assistant", content: [{ type: "text", text: "Discarded findings" }] },
 			{ role: "assistant", content: [{ type: "text", text: "Final rollback findings" }] },
 		] as AgentMessage[];
+		agent.conversationMessages = messages;
 		agent.session = {
 			agent: { state: { messages } },
 		} as unknown as NonNullable<RunningAgent["session"]>;
@@ -172,6 +179,74 @@ describe("buildAgentResultMessage", () => {
 				"</user_agent>",
 			].join("\n"),
 			"Expected the joined payload to contain only provenance attributes and the selected role messages",
+		);
+	});
+
+	test("joins the append-only child conversation after model context compaction", () => {
+		const agent = Object.assign(completedAgent(), {
+			conversationMessages: [
+				{ role: "user", content: "internal background prefix and original task" },
+				{ role: "assistant", content: [{ type: "text", text: "Initial response" }] },
+				{ role: "user", content: "latest steering" },
+				{ role: "assistant", content: [{ type: "text", text: "Final response" }] },
+			] as AgentMessage[],
+		});
+		agent.session = {
+			agent: {
+				state: {
+					messages: [
+						{ role: "compactionSummary", summary: "compacted context" },
+						{ role: "user", content: "latest steering" },
+						{ role: "assistant", content: [{ type: "text", text: "Final response" }] },
+					] as AgentMessage[],
+				},
+			},
+		} as unknown as NonNullable<RunningAgent["session"]>;
+
+		const message = buildAgentResultMessage(
+			agent,
+			{ ok: true, response: "Final response" },
+			{ display: false },
+		);
+
+		assert.match(
+			message.content,
+			/  review the migration[\s\S]*  Initial response[\s\S]*  latest steering[\s\S]*  Final response/,
+			"Expected compaction to leave the complete child conversation available for joining",
+		);
+	});
+
+	test("keeps the original task before recent isolated-agent messages after compaction", () => {
+		const agent = completedAgent();
+		agent.inheritedContext = false;
+		agent.conversationMessages = [
+			{ role: "user", content: "internal background prefix and original task" },
+			{ role: "assistant", content: [{ type: "text", text: "Initial response" }] },
+			{ role: "user", content: "latest steering" },
+			{ role: "assistant", content: [{ type: "text", text: "Final response" }] },
+		] as AgentMessage[];
+		agent.session = {
+			agent: {
+				state: {
+					messages: [
+						{ role: "compactionSummary", summary: "compacted context" },
+						{ role: "user", content: "latest steering" },
+						{ role: "assistant", content: [{ type: "text", text: "Final response" }] },
+					] as AgentMessage[],
+				},
+			},
+		} as unknown as NonNullable<RunningAgent["session"]>;
+
+		const message = buildAgentResultMessage(
+			agent,
+			{ ok: true, response: "Final response" },
+			{ display: false },
+		);
+
+		assert.match(
+			message.content,
+			/  review the migration[\s\S]*  Initial response[\s\S]*  latest steering[\s\S]*  Final response/,
+			"Expected an isolated compacted agent to retain both its original task and latest steering message",
 		);
 	});
 

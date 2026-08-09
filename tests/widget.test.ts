@@ -66,7 +66,7 @@ function renderRunningHeader(
 		toolUses: 0,
 		turnCount: 0,
 		responseText: "",
-		inheritedMessageCount: 0,
+		conversationMessages: [],
 		session:
 			contextUsage === undefined
 				? undefined
@@ -160,7 +160,7 @@ describe("UserAgentWidget steering", () => {
 			toolUses: 0,
 			turnCount: 0,
 			responseText: "",
-			inheritedMessageCount: 0,
+			conversationMessages: [],
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
@@ -217,7 +217,7 @@ describe("UserAgentWidget steering", () => {
 			toolUses: 0,
 			turnCount: 0,
 			responseText: "",
-			inheritedMessageCount: 0,
+			conversationMessages: [],
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
@@ -308,7 +308,7 @@ describe("UserAgentWidget steering", () => {
 			toolUses: 0,
 			turnCount: 0,
 			responseText: "",
-			inheritedMessageCount: 0,
+			conversationMessages: messages,
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
@@ -394,7 +394,7 @@ describe("UserAgentWidget completed overlay", () => {
 			toolUses: 0,
 			turnCount: 1,
 			responseText: "finished response",
-			inheritedMessageCount: 0,
+			conversationMessages: [],
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
 		const resultMessage: AgentResultMessage = {
@@ -544,7 +544,7 @@ function buildIdleHarness(contextUsage: ContextUsage = undefined): IdleHarness {
 		toolUses: 0,
 		turnCount: 1,
 		responseText: "fine how are you?",
-		inheritedMessageCount: 0,
+		conversationMessages: messages,
 		session,
 		pendingJoinMessage,
 		resume: (instruction: string) => {

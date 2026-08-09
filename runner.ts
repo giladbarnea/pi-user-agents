@@ -151,7 +151,7 @@ function createRunningAgent(
 		toolUses: 0,
 		turnCount: 0,
 		responseText: "",
-		inheritedMessageCount: 0,
+		conversationMessages: [],
 		finished: Promise.resolve(),
 	};
 }
@@ -482,7 +482,6 @@ async function createChildSession(
 	logSteering(runningAgent.id, "session-bound", { streaming: session.isStreaming });
 	if (inheritedMessages.length > 0) {
 		session.agent.state.messages = inheritedMessages;
-		runningAgent.inheritedMessageCount = inheritedMessages.length;
 		logSteering(runningAgent.id, "context-inherited", { messageCount: inheritedMessages.length });
 	}
 	return session;
@@ -541,6 +540,8 @@ function subscribeToChildSession(
 			});
 		const finalizedMessageUpdate =
 			event.type === "message_update" && event.assistantMessageEvent.type.endsWith("_end");
+		if (event.type === "message_end")
+			runningAgent.conversationMessages.push(structuredClone(event.message));
 		if (finalizedMessageUpdate || event.type === "message_end")
 			runningAgent.latestFinalizedMessage = structuredClone(event.message);
 		if (

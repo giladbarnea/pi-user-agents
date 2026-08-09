@@ -86,8 +86,8 @@ export type RunningAgent = {
 	toolUses: number;
 	turnCount: number;
 	responseText: string;
-	/** How many messages at the head of the child session were cloned from the parent — the transcript viewer skips them. */
-	inheritedMessageCount: number;
+	/** Append-only child conversation, independent from model context compaction. */
+	conversationMessages: AgentMessage[];
 	latestFinalizedMessage?: AgentMessage;
 	error?: string;
 	session?: AgentSession;

@@ -143,7 +143,7 @@ function buildHarness(
 		toolUses: 1,
 		turnCount: 1,
 		responseText: "done",
-		inheritedMessageCount: 0,
+		conversationMessages: messages,
 		latestFinalizedMessage: options.latestFinalizedMessage,
 		session,
 		finished: Promise.resolve(),

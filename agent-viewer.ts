@@ -546,9 +546,7 @@ export class AgentViewer implements Component {
 const TRANSCRIPT_OUTPUT_CAP = 500;
 
 export function transcriptMessages(agent: ViewableAgent): AgentMessage[] {
-	if (isRunningAgent(agent))
-		return agent.session?.agent.state.messages.slice(agent.inheritedMessageCount) ?? [];
-	return agent.messages;
+	return isRunningAgent(agent) ? agent.conversationMessages : agent.messages;
 }
 
 /** Cheap change detector for the streaming tail of a transcript. String lengths only. */
