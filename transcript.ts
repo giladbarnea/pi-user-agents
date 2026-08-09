@@ -4,6 +4,7 @@ import type {
 	AgentCommandDetails,
 	AgentCommandName,
 	AgentEntryData,
+	AgentMessage,
 	AgentResultMessage,
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -49,6 +50,30 @@ export function reportCommandError(
 	});
 }
 
+/**
+ * Select the joined role messages from a child transcript.
+ *
+ * @example selectJoinedMessages([{ role: "user", content: "hello", timestamp: 0 }]).length // 1
+ */
+type JoinedMessage = Extract<AgentMessage, { role: "user" | "assistant" }>;
+
+export function selectJoinedMessages(messages: readonly AgentMessage[]): JoinedMessage[] {
+	const selected: JoinedMessage[] = [];
+	let latestAssistant: Extract<AgentMessage, { role: "assistant" }> | undefined;
+	for (const message of messages) {
+		if (message.role === "assistant" && roleMessageText(message).trim()) {
+			latestAssistant = message;
+			continue;
+		}
+		if (message.role !== "user") continue;
+		if (latestAssistant) selected.push(latestAssistant);
+		latestAssistant = undefined;
+		selected.push(message);
+	}
+	if (latestAssistant) selected.push(latestAssistant);
+	return selected;
+}
+
 export function buildMessageDetails(agent: RunningAgent, ok: boolean): AgentCommandDetails {
 	return {
 		agentId: agent.id,
@@ -76,28 +101,45 @@ export function buildAgentResultMessage(
 	return {
 		customType: MESSAGE_TYPE,
 		content: outcome.ok
-			? formatResultMessage(agent, outcome.response)
+			? formatResultMessage(agent)
 			: formatErrorMessage(agent, outcome.error),
 		display: options.display,
 		details: buildMessageDetails(agent, outcome.ok),
 	};
 }
 
-export function formatResultMessage(agent: RunningAgent, response: string): string {
-	return [
-		`<user_agent command="/${agent.command}" model="${escapeAttribute(agent.model)}" inherited_context="${agent.inheritedContext}">`,
-		...invocationLines(agent),
-		"<task>",
-		agent.task,
-		"</task>",
-		"<response>",
-		response,
-		"</response>",
-		"<duration_ms>",
-		String((agent.completedAt ?? Date.now()) - agent.turnStartedAt),
-		"</duration_ms>",
-		"</user_agent>",
-	].join("\n");
+const JOINED_CONVERSATION_PREFACE =
+	"The user has dispatched a background sub-agent with a task. The sub-agent is done. The following is the back and forth between them:";
+
+export function formatResultMessage(agent: RunningAgent): string {
+	if (!agent.session) throw new Error("Cannot join a user agent without its child session");
+	const transcript = agent.session.agent.state.messages.slice(agent.inheritedMessageCount);
+	const messages = selectJoinedMessages(transcript);
+	const lines = [
+		JOINED_CONVERSATION_PREFACE,
+		`<user_agent model="${escapeAttribute(agent.model)}" inherited_context="${agent.inheritedContext}">`,
+	];
+	let firstUserMessage = true;
+	for (const [index, message] of messages.entries()) {
+		const tag = message.role === "user" ? "user_message" : "assistant_response";
+		const content =
+			message.role === "user" && firstUserMessage ? agent.task : roleMessageText(message);
+		if (message.role === "user") firstUserMessage = false;
+		lines.push(
+			`  <${tag} i=${index + 1}>`,
+			...content.split("\n").map((line) => `  ${line}`),
+			`  </${tag}>`,
+		);
+	}
+	lines.push("</user_agent>");
+	return lines.join("\n");
+}
+
+function roleMessageText(message: JoinedMessage): string {
+	if (typeof message.content === "string") return message.content;
+	return message.content
+		.flatMap((part) => (part.type === "text" ? [part.text] : []))
+		.join("\n");
 }
 
 export function formatErrorMessage(agent: RunningAgent, message: string): string {

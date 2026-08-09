@@ -70,9 +70,19 @@ Free-form values are guarded instead of guessed. Selecting `--system-prompt` pro
 
 Installed skills and prompt templates also appear as named shortcuts from public `pi.getCommands()` entries. Selecting one inserts its public `sourceInfo.path`, while arbitrary filesystem entries remain available in the same menu. Extensions stay filesystem-only because command-backed extension discovery is incomplete. No theme path menu is offered: singular `--theme <path>` remains blocked, while `--no-themes` remains supported.
 
-By default the entire run is invisible to the main agent: the invocation, the child's tool calling, and the result do not enter its context. Each completed turn's result renders in the transcript as a TUI-only session entry (persisted, survives reloads) — for your eyes only — and the agent's session **stays alive**: its widget entry turns into a green-checked turn-complete row, and you can steer it into another turn from its overlay. The agent remains available until you explicitly join or dispose it. With `-j`/`--join`, the run is still invisible while in flight, but on completion the result — carrying your verbatim command invocation in a `<user_invocation>` tag — is delivered to the main agent ASAP, like a steering message: steered into its current turn if one is streaming, or triggering an immediate response if it is idle. A `-j` run's session ends with that delivery.
+By default, the entire run stays invisible to the main agent. Each completed result appears as a persisted TUI-only entry. The agent session **stays alive**, so you can steer another turn from its overlay. The agent remains available until you join or dispose it.
 
-An agent launched without `-j` offers `j join` in its overlay once a turn has completed. Pressing it sends the latest invocation-and-result message to the main agent with the same trigger behavior as `-j`, and retires the agent's live session — joining is one of the two terminal actions, alongside dispose. The context-bearing message is hidden in the transcript because the original TUI-only result card is already visible. Joining is unavailable while the child is in flight, for runs launched with `-j`, and after a run has already been joined.
+With `-j` or `--join`, the selected child conversation enters the main agent context when the turn completes. Pi steers it into a streaming turn or starts a new turn when idle. A `-j` run ends after delivery.
+
+The joined text starts with this sentence:
+
+> The user has dispatched a background sub-agent with a task. The sub-agent is done. The following is the back and forth between them:
+
+A plain `<user_agent>` tag follows it. The tag contains only the model and inherited-context attributes. Its body contains numbered `<user_message>` and `<assistant_response>` tags, indented by two spaces. The first user message contains the original task without the extension's internal process prefix.
+
+One selection rule builds the body. It keeps every user message. Before each next user message, it keeps only the latest assistant response. It applies the same rule after the final user message. Tool calls, thinking, tool results, and other message roles stay out.
+
+An agent launched without `-j` offers `j join` after a turn completes. Pressing it sends the same selected conversation and retires the live session. The context message stays hidden because the TUI-only result card is already visible. Joining is unavailable during a turn, after a join, or for runs launched with `-j`.
 
 The widget below the editor shows in-flight, turn-complete, and finished agents. Use `←` or `↓` to select it, then press `Enter` to open an agent overlay.
 
@@ -93,7 +103,7 @@ Each agent row places a one-cell context meter between the command and its promp
 
 The meter shows how much of that child agent's selected model context window is in use. Its nine levels run from an empty cell through `▁▂▃▄▅▆▇█`, matching the custom footer's fill scale. Its colors also match the footer's stages: dim below 40%, muted at 40%, warning at 65%, and error at 85%. This value belongs to the child session, so it can differ from the main session's footer after the child does more work. Completed rows retain their final reading. The extension reads Pi's resolved model and live session context usage, so model-specific limits and configured `contextWindow` overrides are respected; when Pi cannot provide a usage percentage, the meter is omitted rather than guessed.
 
-The overlay shows the agent's full rolling conversation — user prompts, assistant turns, tool calls, and tool results — and follows the tail while the agent streams. Scroll up to pause following; `End` resumes it. Once a turn of a run launched without `-j` has completed, press `j` to join its original invocation and latest response into the main context.
+The overlay shows the full rolling conversation and follows the tail while the agent streams. Scroll up to pause following. Press `End` to resume it. After a turn without `-j` completes, press `j` to join the selected conversation into the main context.
 
 ## Steering an agent
 
@@ -117,7 +127,7 @@ How a finished run reaches (or hides from) the main agent rests on two Pi SDK ch
 
 This extension maps the two extremes onto the `-j` flag: the default posts the result card via `appendEntry` (main agent structurally oblivious), and `-j` posts a visible custom message with `{ triggerTurn: true }` (steered mid-turn or answered immediately). Both channels share one card renderer in `transcript.ts`.
 
-Immediate `-j` delivery and late `j join` delivery also share one canonical message builder. Its required `display` option is `true` for `-j` and `false` for a join, preventing a second copy of the already-visible result card. The message content, metadata, and `{ triggerTurn: true }` delivery are otherwise identical.
+Immediate `-j` delivery and late `j join` delivery share one canonical message builder. Its `display` option prevents a second visible result card. Both paths use the same selected conversation and `{ triggerTurn: true }` delivery.
 
 ## Runtime sharing
 

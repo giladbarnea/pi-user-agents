@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import assert from "node:assert/strict";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type {
 	AgentEntryData,
+	AgentMessage,
 	AgentResultMessage,
 	ExtensionAPI,
 	RunningAgent,
@@ -11,6 +13,7 @@ import {
 	buildAgentResultMessage,
 	formatStartNotification,
 	registerUserAgentRenderer,
+	selectJoinedMessages,
 } from "../transcript.js";
 
 function completedAgent(): RunningAgent {
@@ -33,6 +36,19 @@ function completedAgent(): RunningAgent {
 		turnCount: 1,
 		responseText: "migration reviewed",
 		inheritedMessageCount: 0,
+		session: {
+			agent: {
+				state: {
+					messages: [
+						{ role: "user", content: "review the migration" },
+						{
+							role: "assistant",
+							content: [{ type: "text", text: "migration reviewed" }],
+						},
+					] as AgentMessage[],
+				},
+			},
+		} as unknown as NonNullable<RunningAgent["session"]>,
 		finished: Promise.resolve(),
 	};
 }
@@ -47,7 +63,118 @@ describe("agent chat events", () => {
 	});
 });
 
+describe("joined conversation selection", () => {
+	test("keeps every user message and only the last assistant response before the next user", () => {
+		const messages = [
+			{ role: "user", content: "request 1" },
+			{ role: "assistant", content: [{ type: "toolCall", id: "call-1" }] },
+			{ role: "assistant", content: [{ type: "thinking", thinking: "thought 1" }] },
+			{ role: "assistant", content: [{ type: "text", text: "response 1" }] },
+			{ role: "user", content: "request 2" },
+			{ role: "assistant", content: [{ type: "text", text: "discarded response" }] },
+			{ role: "assistant", content: [{ type: "toolCall", id: "call-2" }] },
+			{ role: "assistant", content: [{ type: "thinking", thinking: "thought 2" }] },
+			{ role: "assistant", content: [{ type: "text", text: "response 2" }] },
+			{ role: "user", content: "request 3" },
+			{ role: "assistant", content: [{ type: "thinking", thinking: "thought 3" }] },
+			{ role: "assistant", content: [{ type: "text", text: "response 3" }] },
+		] as AgentMessage[];
+
+		const selected = selectJoinedMessages(messages);
+
+		assert.deepEqual(
+			selected,
+			[messages[0], messages[3], messages[4], messages[8], messages[9], messages[11]],
+			"Expected each user message followed by only the final assistant message in its interval",
+		);
+	});
+
+	test("does not turn tool calls or thinking into assistant responses", () => {
+		const messages = [
+			{ role: "user", content: "request 1" },
+			{ role: "assistant", content: [{ type: "toolCall", id: "call-1" }] },
+			{ role: "assistant", content: [{ type: "thinking", thinking: "thought" }] },
+			{ role: "user", content: "request 2" },
+			{ role: "assistant", content: [{ type: "text", text: "response 2" }] },
+		] as AgentMessage[];
+
+		assert.deepEqual(
+			selectJoinedMessages(messages),
+			[messages[0], messages[3], messages[4]],
+			"Expected non-response assistant content to stay out of the joined conversation",
+		);
+	});
+
+	test("keeps single turns, trailing users, and consecutive users", () => {
+		const user1 = { role: "user", content: "request 1" } as AgentMessage;
+		const user2 = { role: "user", content: "request 2" } as AgentMessage;
+		const response = {
+			role: "assistant",
+			content: [{ type: "text", text: "response" }],
+		} as AgentMessage;
+		const cases = [
+			{ name: "single turn", messages: [user1, response] },
+			{ name: "trailing user", messages: [user1, response, user2] },
+			{ name: "consecutive users", messages: [user1, user2, response] },
+		];
+
+		for (const testCase of cases) {
+			assert.deepEqual(
+				selectJoinedMessages(testCase.messages),
+				testCase.messages,
+				`Expected the ${testCase.name} boundary to retain every available conversation message`,
+			);
+		}
+	});
+});
+
 describe("buildAgentResultMessage", () => {
+	test("joins the selected conversation in the plain role-tagged context payload", () => {
+		const agent = completedAgent();
+		const messages = [
+			{
+				role: "user",
+				content:
+					"You are running in an ephemeral, forked background process now, concurrently with the main session. review the migration",
+			},
+			{ role: "assistant", content: [{ type: "text", text: "Initial findings" }] },
+			{ role: "user", content: "Check the rollback path too" },
+			{ role: "assistant", content: [{ type: "text", text: "Discarded findings" }] },
+			{ role: "assistant", content: [{ type: "text", text: "Final rollback findings" }] },
+		] as AgentMessage[];
+		agent.session = {
+			agent: { state: { messages } },
+		} as unknown as NonNullable<RunningAgent["session"]>;
+
+		const message = buildAgentResultMessage(
+			agent,
+			{ ok: true, response: "Final rollback findings" },
+			{ display: false },
+		);
+
+		assert.equal(
+			message.content,
+			[
+				"The user has dispatched a background sub-agent with a task. The sub-agent is done. The following is the back and forth between them:",
+				'<user_agent model="provider/model" inherited_context="true">',
+				"  <user_message i=1>",
+				"  review the migration",
+				"  </user_message>",
+				"  <assistant_response i=2>",
+				"  Initial findings",
+				"  </assistant_response>",
+				"  <user_message i=3>",
+				"  Check the rollback path too",
+				"  </user_message>",
+				"  <assistant_response i=4>",
+				"  Final rollback findings",
+				"  </assistant_response>",
+				"</user_agent>",
+			].join("\n"),
+			"Expected the joined payload to contain only provenance attributes and the selected role messages",
+		);
+	});
+
 	test("builds one canonical payload whose visible and hidden forms differ only by display", () => {
 		const agent = completedAgent();
 		const outcome = { ok: true, response: agent.responseText } as const;
@@ -55,9 +182,12 @@ describe("buildAgentResultMessage", () => {
 		const hidden = buildAgentResultMessage(agent, outcome, { display: false });
 
 		expect({ ...hidden, display: true }).toEqual(visible);
-		expect(hidden.content).toContain("<user_invocation>\n/agent review the migration\n</user_invocation>");
-		expect(hidden.content).toContain("<task>\nreview the migration\n</task>");
-		expect(hidden.content).toContain("<response>\nmigration reviewed\n</response>");
+		expect(hidden.content).toContain("  <user_message i=1>\n  review the migration\n  </user_message>");
+		expect(hidden.content).toContain(
+			"  <assistant_response i=2>\n  migration reviewed\n  </assistant_response>",
+		);
+		expect(hidden.content).not.toContain("<user_invocation>");
+		expect(hidden.content).not.toContain("<duration_ms>");
 		expect(hidden.details.responseText).toBe("migration reviewed");
 		expect(hidden.details.responsePreview).toBeUndefined();
 	});
@@ -154,6 +284,13 @@ describe("completed agent transcript card", () => {
 			{ ok: true, response: legacyAgent.responseText },
 			{ display: false },
 		);
+		legacyMessage.content = [
+			"<user_agent>",
+			"<response>",
+			legacyAgent.responseText,
+			"</response>",
+			"</user_agent>",
+		].join("\n");
 		legacyMessage.details.responseText = undefined;
 		legacyMessage.details.responsePreview = "A full response";
 		const legacyOutput = renderEntry
