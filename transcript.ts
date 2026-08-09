@@ -180,42 +180,17 @@ function liveAgentCard(
 	expanded: boolean,
 	theme: Theme,
 ): Component {
-	let cached:
-		| {
-				content: string;
-				details: AgentCommandDetails | undefined;
-				mainContextState: AgentCommandDetails["mainContextState"];
-				card: Container;
-		  }
-		| undefined;
+	const body = renderAgentCardBody(content(), details(), expanded, theme);
 	return {
-		render: (width) => {
-			const currentContent = content();
-			const currentDetails = details();
-			const mainContextState = currentDetails?.mainContextState;
-			if (
-				!cached ||
-				cached.content !== currentContent ||
-				cached.details !== currentDetails ||
-				cached.mainContextState !== mainContextState
-			) {
-				cached = {
-					content: currentContent,
-					details: currentDetails,
-					mainContextState,
-					card: renderAgentCard(currentContent, currentDetails, expanded, theme),
-				};
-			}
-			return cached.card.render(width);
-		},
-		invalidate: () => cached?.card.invalidate(),
+		render: (width) => renderAgentCard(content(), details(), body, theme).render(width),
+		invalidate: () => body.invalidate(),
 	};
 }
 
 function renderAgentCard(
 	content: string,
 	details: AgentCommandDetails | undefined,
-	expanded: boolean,
+	body: Component,
 	theme: Theme,
 ): Container {
 	const ok = details?.ok ?? !content.includes("<user_agent_error");
@@ -224,38 +199,38 @@ function renderAgentCard(
 	const statusText = ok ? theme.fg("dim", "completed") : theme.fg("error", "failed");
 	const parts = buildRendererParts(content, details);
 	const task = details?.task ?? extractTag(content, "task");
-	const output =
-		details?.responseText ??
-		details?.error ??
-		extractTag(content, ok ? "response" : "error") ??
-		"No output.";
-	const preview = details?.responsePreview ?? output;
 
 	let text = `${icon} ${theme.bold(command)} ${statusText}`;
 	if (parts.length > 0) text += ` ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}`;
 	if (task) text += `\n  ${theme.fg("dim", `task: ${truncatePlain(task, 88)}`)}`;
 	const card = new Container();
 	card.addChild(new Text(text, 0, 0));
-	if (expanded) {
-		card.addChild(
-			ok
-				? new Markdown(output, 2, 0, getMarkdownTheme())
-				: new Text(theme.fg("error", output), 2, 0),
-		);
-		return card;
-	}
-
-	const previewText = `⎿  ${truncatePlain(preview, 110)}`;
-	if (ok) {
-		card.addChild(
-			new Markdown(previewText, 2, 0, getMarkdownTheme(), {
-				color: (value) => theme.fg("dim", value),
-			}),
-		);
-	} else {
-		card.addChild(new Text(`  ${theme.fg("error", previewText)}`, 0, 0));
-	}
+	card.addChild(body);
 	return card;
+}
+
+function renderAgentCardBody(
+	content: string,
+	details: AgentCommandDetails | undefined,
+	expanded: boolean,
+	theme: Theme,
+): Component {
+	const ok = details?.ok ?? !content.includes("<user_agent_error");
+	const output =
+		details?.responseText ??
+		details?.error ??
+		extractTag(content, ok ? "response" : "error") ??
+		"No output.";
+	if (expanded)
+		return ok
+			? new Markdown(output, 2, 0, getMarkdownTheme())
+			: new Text(theme.fg("error", output), 2, 0);
+
+	const previewText = `⎿  ${truncatePlain(details?.responsePreview ?? output, 110)}`;
+	if (!ok) return new Text(`  ${theme.fg("error", previewText)}`, 0, 0);
+	return new Markdown(previewText, 2, 0, getMarkdownTheme(), {
+		color: (value) => theme.fg("dim", value),
+	});
 }
 
 function customMessageContentText(content: unknown): string {

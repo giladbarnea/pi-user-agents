@@ -109,13 +109,9 @@ describe("completed agent transcript card", () => {
 			{ display: false },
 		);
 		const entry = { data: { content: message.content, details: message.details } };
-		let foregroundCalls = 0;
 		const identityTheme = {
 			bold: (text: string) => text,
-			fg: (_color: string, text: string) => {
-				foregroundCalls += 1;
-				return text;
-			},
+			fg: (_color: string, text: string) => text,
 		} as Theme;
 		const component = renderEntry?.(entry, { expanded: false }, identityTheme);
 		const output = component?.render(120).join("\n");
@@ -127,9 +123,7 @@ describe("completed agent transcript card", () => {
 
 		const expandedEntry = renderEntry?.(entry, { expanded: true }, identityTheme);
 		const expandedEntryOutput = expandedEntry?.render(120).join("\n");
-		const foregroundCallsAfterFirstRender = foregroundCalls;
-		expandedEntry?.render(120);
-		expect(foregroundCalls).toBe(foregroundCallsAfterFirstRender);
+		expect(expandedEntry?.render(120).join("\n")).toBe(expandedEntryOutput);
 
 		const expandedMessageOutput = renderMessage
 			?.(message, { expanded: true }, identityTheme)
