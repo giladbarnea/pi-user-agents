@@ -59,6 +59,8 @@ export type AgentCommandDetails = {
 	durationMs?: number;
 	toolUses?: number;
 	turnCount?: number;
+	responseText?: string;
+	/** Retained for completed entries written before responseText was persisted. */
 	responsePreview?: string;
 	error?: string;
 };

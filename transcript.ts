@@ -62,7 +62,7 @@ export function buildMessageDetails(agent: RunningAgent, ok: boolean): AgentComm
 		durationMs: (agent.completedAt ?? Date.now()) - agent.turnStartedAt,
 		toolUses: agent.toolUses,
 		turnCount: agent.turnCount,
-		responsePreview: ok ? truncatePlain(agent.responseText, 500) : undefined,
+		responseText: ok ? agent.responseText : undefined,
 		error: ok ? undefined : agent.error,
 	};
 }
@@ -180,9 +180,35 @@ function liveAgentCard(
 	expanded: boolean,
 	theme: Theme,
 ): Component {
+	let cached:
+		| {
+				content: string;
+				details: AgentCommandDetails | undefined;
+				mainContextState: AgentCommandDetails["mainContextState"];
+				card: Container;
+		  }
+		| undefined;
 	return {
-		render: (width) => renderAgentCard(content(), details(), expanded, theme).render(width),
-		invalidate: () => undefined,
+		render: (width) => {
+			const currentContent = content();
+			const currentDetails = details();
+			const mainContextState = currentDetails?.mainContextState;
+			if (
+				!cached ||
+				cached.content !== currentContent ||
+				cached.details !== currentDetails ||
+				cached.mainContextState !== mainContextState
+			) {
+				cached = {
+					content: currentContent,
+					details: currentDetails,
+					mainContextState,
+					card: renderAgentCard(currentContent, currentDetails, expanded, theme),
+				};
+			}
+			return cached.card.render(width);
+		},
+		invalidate: () => cached?.card.invalidate(),
 	};
 }
 
@@ -198,9 +224,12 @@ function renderAgentCard(
 	const statusText = ok ? theme.fg("dim", "completed") : theme.fg("error", "failed");
 	const parts = buildRendererParts(content, details);
 	const task = details?.task ?? extractTag(content, "task");
-	const persistedOutput = extractTag(content, ok ? "response" : "error");
-	const preview = details?.responsePreview ?? details?.error ?? persistedOutput ?? "No output.";
-	const output = persistedOutput ?? details?.error ?? "No output.";
+	const output =
+		details?.responseText ??
+		details?.error ??
+		extractTag(content, ok ? "response" : "error") ??
+		"No output.";
+	const preview = details?.responsePreview ?? output;
 
 	let text = `${icon} ${theme.bold(command)} ${statusText}`;
 	if (parts.length > 0) text += ` ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}`;

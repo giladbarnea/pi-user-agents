@@ -58,6 +58,8 @@ describe("buildAgentResultMessage", () => {
 		expect(hidden.content).toContain("<user_invocation>\n/agent review the migration\n</user_invocation>");
 		expect(hidden.content).toContain("<task>\nreview the migration\n</task>");
 		expect(hidden.content).toContain("<response>\nmigration reviewed\n</response>");
+		expect(hidden.details.responseText).toBe("migration reviewed");
+		expect(hidden.details.responsePreview).toBeUndefined();
 	});
 });
 
@@ -91,8 +93,11 @@ describe("completed agent transcript card", () => {
 		registerUserAgentRenderer(pi);
 
 		const agent = completedAgent();
+		agent.task = "review a <response>decoy</response> marker";
 		agent.responseText = [
 			"**Almost.** One stale instruction remains.",
+			"",
+			"The literal closing tag </response> is part of this response.",
 			"",
 			"## Full finding",
 			"",
@@ -104,9 +109,13 @@ describe("completed agent transcript card", () => {
 			{ display: false },
 		);
 		const entry = { data: { content: message.content, details: message.details } };
+		let foregroundCalls = 0;
 		const identityTheme = {
 			bold: (text: string) => text,
-			fg: (_color: string, text: string) => text,
+			fg: (_color: string, text: string) => {
+				foregroundCalls += 1;
+				return text;
+			},
 		} as Theme;
 		const component = renderEntry?.(entry, { expanded: false }, identityTheme);
 		const output = component?.render(120).join("\n");
@@ -116,15 +125,20 @@ describe("completed agent transcript card", () => {
 		expect(output).not.toContain("Full finding");
 		expect(output).not.toContain("join context");
 
-		const expandedEntryOutput = renderEntry
-			?.(entry, { expanded: true }, identityTheme)
-			?.render(120)
-			.join("\n");
+		const expandedEntry = renderEntry?.(entry, { expanded: true }, identityTheme);
+		const expandedEntryOutput = expandedEntry?.render(120).join("\n");
+		const foregroundCallsAfterFirstRender = foregroundCalls;
+		expandedEntry?.render(120);
+		expect(foregroundCalls).toBe(foregroundCallsAfterFirstRender);
+
 		const expandedMessageOutput = renderMessage
 			?.(message, { expanded: true }, identityTheme)
 			?.render(120)
 			.join("\n");
 		for (const expandedOutput of [expandedEntryOutput, expandedMessageOutput]) {
+			expect(expandedOutput).toContain(
+				"The literal closing tag </response> is part of this response.",
+			);
 			expect(expandedOutput).toContain("Full finding");
 			expect(expandedOutput).toContain(
 				"The persisted response remains available after the child session is disposed.",
@@ -138,5 +152,24 @@ describe("completed agent transcript card", () => {
 		message.details.mainContextState = "joined";
 		const joinedOutput = component?.render(120).join("\n");
 		expect(joinedOutput).toContain("joined context");
+
+		const legacyAgent = completedAgent();
+		legacyAgent.responseText = "A full response from an older persisted entry.";
+		const legacyMessage = buildAgentResultMessage(
+			legacyAgent,
+			{ ok: true, response: legacyAgent.responseText },
+			{ display: false },
+		);
+		legacyMessage.details.responseText = undefined;
+		legacyMessage.details.responsePreview = "A full response";
+		const legacyOutput = renderEntry
+			?.(
+				{ data: { content: legacyMessage.content, details: legacyMessage.details } },
+				{ expanded: true },
+				identityTheme,
+			)
+			?.render(120)
+			.join("\n");
+		expect(legacyOutput).toContain("A full response from an older persisted entry.");
 	});
 });
