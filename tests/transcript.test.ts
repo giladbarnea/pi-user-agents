@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type {
 	AgentEntryData,
+	AgentResultMessage,
 	ExtensionAPI,
 	RunningAgent,
 	Theme,
@@ -61,17 +62,28 @@ describe("buildAgentResultMessage", () => {
 });
 
 describe("completed agent transcript card", () => {
-	test("renders the response preview with Pi Markdown", () => {
+	test("renders a Markdown preview and expands to the full persisted response", () => {
 		initTheme(undefined, false);
+		type RenderedComponent = { render(width: number): string[] } | undefined;
+		type RenderOptions = { expanded: boolean };
+		let renderMessage:
+			| ((
+					message: AgentResultMessage,
+					options: RenderOptions,
+					theme: Theme,
+			  ) => RenderedComponent)
+			| undefined;
 		let renderEntry:
 			| ((
 					entry: { data?: AgentEntryData },
-					options: unknown,
+					options: RenderOptions,
 					theme: Theme,
-			  ) => { render(width: number): string[] } | undefined)
+			  ) => RenderedComponent)
 			| undefined;
 		const pi = {
-			registerMessageRenderer: () => undefined,
+			registerMessageRenderer: (_customType: string, renderer: typeof renderMessage) => {
+				renderMessage = renderer;
+			},
 			registerEntryRenderer: (_customType: string, renderer: typeof renderEntry) => {
 				renderEntry = renderer;
 			},
@@ -79,26 +91,45 @@ describe("completed agent transcript card", () => {
 		registerUserAgentRenderer(pi);
 
 		const agent = completedAgent();
-		agent.responseText = "**Almost.** One stale instruction remains.";
+		agent.responseText = [
+			"**Almost.** One stale instruction remains.",
+			"",
+			"## Full finding",
+			"",
+			"The persisted response remains available after the child session is disposed.",
+		].join("\n");
 		const message = buildAgentResultMessage(
 			agent,
 			{ ok: true, response: agent.responseText },
 			{ display: false },
 		);
+		const entry = { data: { content: message.content, details: message.details } };
 		const identityTheme = {
 			bold: (text: string) => text,
 			fg: (_color: string, text: string) => text,
 		} as Theme;
-		const component = renderEntry?.(
-			{ data: { content: message.content, details: message.details } },
-			{},
-			identityTheme,
-		);
+		const component = renderEntry?.(entry, { expanded: false }, identityTheme);
 		const output = component?.render(120).join("\n");
 
 		expect(output).toContain("⎿  Almost. One stale instruction remains.");
 		expect(output).not.toContain("**Almost.**");
+		expect(output).not.toContain("Full finding");
 		expect(output).not.toContain("join context");
+
+		const expandedEntryOutput = renderEntry
+			?.(entry, { expanded: true }, identityTheme)
+			?.render(120)
+			.join("\n");
+		const expandedMessageOutput = renderMessage
+			?.(message, { expanded: true }, identityTheme)
+			?.render(120)
+			.join("\n");
+		for (const expandedOutput of [expandedEntryOutput, expandedMessageOutput]) {
+			expect(expandedOutput).toContain("Full finding");
+			expect(expandedOutput).toContain(
+				"The persisted response remains available after the child session is disposed.",
+			);
+		}
 
 		message.details.mainContextState = "will-join";
 		const pendingOutput = component?.render(120).join("\n");

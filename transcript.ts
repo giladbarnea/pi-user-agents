@@ -150,31 +150,38 @@ export function formatStartNotification(agent: RunningAgent): string {
 }
 
 export function registerUserAgentRenderer(pi: ExtensionAPI): void {
-	pi.registerMessageRenderer<AgentCommandDetails>(MESSAGE_TYPE, (message, _options, theme) =>
-		liveAgentCard(
-			() => customMessageContentText(message.content),
-			() => message.details,
-			theme,
-		),
+	pi.registerMessageRenderer<AgentCommandDetails>(
+		MESSAGE_TYPE,
+		(message, { expanded }, theme) =>
+			liveAgentCard(
+				() => customMessageContentText(message.content),
+				() => message.details,
+				expanded,
+				theme,
+			),
 	);
-	pi.registerEntryRenderer<AgentEntryData>(MESSAGE_TYPE, (entry, _options, theme) =>
-		entry.data
-			? liveAgentCard(
-					() => entry.data!.content,
-					() => entry.data!.details,
-					theme,
-				)
-			: undefined,
+	pi.registerEntryRenderer<AgentEntryData>(
+		MESSAGE_TYPE,
+		(entry, { expanded }, theme) =>
+			entry.data
+				? liveAgentCard(
+						() => entry.data!.content,
+						() => entry.data!.details,
+						expanded,
+						theme,
+					)
+				: undefined,
 	);
 }
 
 function liveAgentCard(
 	content: () => string,
 	details: () => AgentCommandDetails | undefined,
+	expanded: boolean,
 	theme: Theme,
 ): Component {
 	return {
-		render: (width) => renderAgentCard(content(), details(), theme).render(width),
+		render: (width) => renderAgentCard(content(), details(), expanded, theme).render(width),
 		invalidate: () => undefined,
 	};
 }
@@ -182,6 +189,7 @@ function liveAgentCard(
 function renderAgentCard(
 	content: string,
 	details: AgentCommandDetails | undefined,
+	expanded: boolean,
 	theme: Theme,
 ): Container {
 	const ok = details?.ok ?? !content.includes("<user_agent_error");
@@ -190,17 +198,24 @@ function renderAgentCard(
 	const statusText = ok ? theme.fg("dim", "completed") : theme.fg("error", "failed");
 	const parts = buildRendererParts(content, details);
 	const task = details?.task ?? extractTag(content, "task");
-	const preview =
-		details?.responsePreview ??
-		details?.error ??
-		extractTag(content, ok ? "response" : "error") ??
-		"No output.";
+	const persistedOutput = extractTag(content, ok ? "response" : "error");
+	const preview = details?.responsePreview ?? details?.error ?? persistedOutput ?? "No output.";
+	const output = persistedOutput ?? details?.error ?? "No output.";
 
 	let text = `${icon} ${theme.bold(command)} ${statusText}`;
 	if (parts.length > 0) text += ` ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}`;
 	if (task) text += `\n  ${theme.fg("dim", `task: ${truncatePlain(task, 88)}`)}`;
 	const card = new Container();
 	card.addChild(new Text(text, 0, 0));
+	if (expanded) {
+		card.addChild(
+			ok
+				? new Markdown(output, 2, 0, getMarkdownTheme())
+				: new Text(theme.fg("error", output), 2, 0),
+		);
+		return card;
+	}
+
 	const previewText = `⎿  ${truncatePlain(preview, 110)}`;
 	if (ok) {
 		card.addChild(
