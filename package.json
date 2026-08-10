@@ -11,6 +11,7 @@
     "multi-agent"
   ],
   "author": "Gilad Barnea",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/giladbarnea/pi-user-agents.git"
@@ -24,7 +25,8 @@
     "tool-render",
     "README.md",
     "PARSER_SPEC.md",
-    "INTERNALS.md"
+    "INTERNALS.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "bun test"
