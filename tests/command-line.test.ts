@@ -3,29 +3,23 @@ import assert from "node:assert/strict";
 import { parseAgentCommand } from "../runner.ts";
 
 describe("theme option policy", () => {
-	test("--theme is rejected while --no-themes remains supported for both agent commands", () => {
-		const runtimeCases = [
-			{ command: "agent", prefix: "", isolate: false },
-			{ command: "agent-isolated", prefix: "-i ", isolate: true },
-		] as const;
-		for (const { command, prefix, isolate } of runtimeCases) {
-			assert.throws(
-				() => parseAgentCommand(`${prefix}--theme ./theme.json do it`, command),
-				new RegExp(`/${command} does not support --theme`),
-				`Expected /${command} to reject Pi's singular --theme option`,
-			);
-			assert.deepEqual(
-				parseAgentCommand(`${prefix}--no-themes do it`, command),
-				{
-					isolate,
-					context: false,
-					forwardedArgs: ["--no-themes"],
-					task: "do it",
-					warnings: [],
-				},
-				`Expected /${command} to continue forwarding --no-themes`,
-			);
-		}
+	test("--theme is rejected while --no-themes remains supported", () => {
+		assert.throws(
+			() => parseAgentCommand("--theme ./theme.json do it", "agent"),
+			/\/agent does not support --theme/,
+			"Expected /agent to reject Pi's singular --theme option",
+		);
+		assert.deepEqual(
+			parseAgentCommand("--no-themes do it", "agent"),
+			{
+				isolate: false,
+				context: false,
+				forwardedArgs: ["--no-themes"],
+				task: "do it",
+				warnings: [],
+			},
+			"Expected /agent to continue forwarding --no-themes",
+		);
 	});
 
 	test("a prose-mode --theme advisory retains its path value", () => {

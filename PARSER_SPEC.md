@@ -1,7 +1,7 @@
 # `/agent` command-line parser — specification
 
 This is the authoritative spec for how the shared command-line engine interprets
-submitted `/agent` / `/agent-isolated` input and pre-submit editor input. Runtime parsing
+submitted `/agent` input and pre-submit editor input. Runtime parsing
 and eager autocomplete both derive option names, arity, aliases, roles, and value domains
 from the declaration in `command-line.ts`.
 
@@ -88,8 +88,8 @@ Value examples:
 ### 3c. Blocked pi options — rejected
 `-c`/`--continue`, `--theme <path>`, `--models`, `--export`, `--list-models`, `-h`/`--help`,
 `-v`/`--version`.
-Appearing in **args mode** (leading) → hard **error** for either command:
-`"/<command> does not support <opt>; it would disrupt the background agent run."`
+Appearing in **args mode** (leading) → hard **error**:
+`"/agent does not support <opt>; it would disrupt the background agent run."`
 
 Blocked options stay declared so prose advisories remain truthful. In particular, singular
 `--theme` is declared value-taking: `do it --theme ./theme.json` warns about
@@ -111,7 +111,6 @@ While in prose mode, if an **unescaped, unquoted** token is a **recognized** opt
 
 - `<value>` appears only for value-taking options; it is the token that immediately follows in the input.
 - `<first-prose-word>` is the first whitespace-delimited word of the prose.
-- `<command>` is the actual command (`agent` or `agent-isolated`).
 - Unknown arg-looking tokens in prose (`-g`, `--doesnotexist`) → **no** warning.
 - Quoted or backslash-escaped option-looking tokens → **no** warning.
 - Warnings never change the prose text.
@@ -179,7 +178,7 @@ recognition and arity come from the shared declaration.
 
 ## 10. Pre-submit cursor analysis and eager autocomplete
 
-Cursor analysis recognizes only exact `/agent` and `/agent-isolated` command lines. It
+Cursor analysis recognizes only exact `/agent` command lines. It
 preserves the active token's source span and reports either an option fragment, a value
 fragment with its owning declaration, or no completion once parsing has entered terminal
 prose. Quoted and backslash-escaped dashes therefore never reopen option completion.
@@ -187,8 +186,7 @@ prose. Quoted and backslash-escaped dashes therefore never reopen option complet
 Typing `-` at a valid option position explicitly opens the menu without Tab. A single `-`
 may match short and long spellings; `--` matches long spellings only. Every alias is shown as
 its own row, but using either spelling suppresses the whole semantic option thereafter.
-`/agent-isolated` seeds isolation as already present, so neither `-i` nor `--isolate` is
-offered. Blocked and recognized-but-child-ineffective options remain parseable but are never
+Blocked and recognized-but-child-ineffective options remain parseable but are never
 recommended.
 
 The finite value domains implemented today are:
@@ -257,7 +255,7 @@ Prose itself is never tokenized; unknown dash-words, quoted spans, and escaped w
 plain. `parseAgentCommand` is a thin projection over the scan (blocked → hard error, blank
 prose → usage error), so parsing and coloring cannot drift.
 
-`scanAgentCommandLine` recognizes the same exact `/agent` / `/agent-isolated` prefix as
+`scanAgentCommandLine` recognizes the same exact `/agent` prefix as
 cursor analysis (§10) and shifts token spans into editor-line coordinates.
 
 The editor coloring layer (`editor-coloring.ts`) maps token semantics onto Pi theme

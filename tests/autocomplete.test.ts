@@ -48,30 +48,6 @@ describe("agent command editor autocomplete", () => {
 		);
 	});
 
-	test("/agent-isolated eagerly offers options but suppresses both isolation spellings", async () => {
-		const harness = await createEditorHarness();
-
-		harness.type("/agent-isolated -");
-		await harness.waitForAutocomplete();
-		const rendered = harness.render();
-
-		assert.match(
-			rendered,
-			/-m <model>/,
-			`Expected /agent-isolated to open the option menu.\nRendered editor:\n${rendered}`,
-		);
-		assert.doesNotMatch(
-			rendered,
-			/\n[→ ]+-i\s+Start without/,
-			`Expected /agent-isolated to suppress -i.\nRendered editor:\n${rendered}`,
-		);
-		assert.doesNotMatch(
-			rendered,
-			/\n[→ ]+--isolate\s+Start without/,
-			`Expected /agent-isolated to suppress --isolate.\nRendered editor:\n${rendered}`,
-		);
-	});
-
 	test("offers and accepts both join option spellings", async () => {
 		for (const joinOption of ["-j", "--join"]) {
 			const harness = await createEditorHarness();

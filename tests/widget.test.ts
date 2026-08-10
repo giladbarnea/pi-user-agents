@@ -383,7 +383,7 @@ describe("UserAgentWidget completed overlay", () => {
 			model: "provider/model",
 			modelLabel: "model",
 			task: "finish the task",
-			invocation: "/agent-isolated finish the task",
+			invocation: "/agent -i finish the task",
 			notifyMainAgent: false,
 			mainContextState: "separate",
 			status: "posted",

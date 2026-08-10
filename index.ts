@@ -40,23 +40,6 @@ export default function userAgent(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerCommand("agent-isolated", {
-		description: "Alias for /agent -i: run without current session context",
-		handler: async (args, ctx) => {
-			await handleAgentCommand(
-				pi,
-				runningAgents,
-				widget,
-				() => shuttingDown,
-				() => ++nextAgentNumber,
-				"agent-isolated",
-				`-i ${args}`,
-				`/agent-isolated ${args}`.trim(),
-				ctx,
-			);
-		},
-	});
-
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
 		widget.dispose();

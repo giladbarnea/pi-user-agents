@@ -528,7 +528,7 @@ function analyzeArgumentCursor(
 	cursor: number,
 	command: AgentCommandName,
 ): AgentCursorExpectation | undefined {
-	const usedSemanticIds = new Set<string>(command === "agent-isolated" ? ["isolate"] : []);
+	const usedSemanticIds = new Set<string>();
 	let position = 0;
 	let expectedValueOption: AgentOptionDefinition | undefined;
 	let provider: string | undefined;
@@ -645,9 +645,9 @@ function readCursorValue(
 function matchAgentCommandPrefix(
 	line: string,
 ): { command: AgentCommandName; argumentOffset: number } | undefined {
-	const match = /^\/(agent-isolated|agent)(?=$|\s)/.exec(line);
+	const match = /^\/agent(?=$|\s)/.exec(line);
 	if (!match) return undefined;
-	return { command: match[1] as AgentCommandName, argumentOffset: match[0].length };
+	return { command: "agent", argumentOffset: match[0].length };
 }
 
 function readValueSpan(

@@ -92,7 +92,7 @@ describe("scanAgentCommandLine — shared semantic representation", () => {
 	test("recognizes only exact agent command lines", () => {
 		assert.equal(scanAgentCommandLine("hello -m x"), undefined);
 		assert.equal(scanAgentCommandLine("/agents fix it"), undefined);
-		assert.equal(scanAgentCommandLine("/agent-isolated fix it")?.command, "agent-isolated");
+		assert.equal(scanAgentCommandLine("/agent-isolated fix it"), undefined);
 	});
 });
 
@@ -197,14 +197,6 @@ describe("editor semantic coloring", () => {
 		});
 		harness.type('/agent --system-prompt "be terse" go');
 		assert.ok(harness.renderRaw().includes(`${colored("syntaxString", '"be terse"')} go`));
-	});
-
-	test("colors the /agent-isolated command token", async () => {
-		const harness = await createEditorHarness(undefined, [], [], [], {
-			themeFg: createMarkingThemeFg(new Set()),
-		});
-		harness.type("/agent-isolated fix");
-		assert.ok(harness.renderRaw().includes(`${colored("accent", "/agent-isolated")} fix`));
 	});
 
 	test("keeps the inverse-video cursor intact inside a colored token", async () => {

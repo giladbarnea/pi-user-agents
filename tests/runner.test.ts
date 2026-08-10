@@ -25,7 +25,7 @@ const base = {
 
 /** Build the single prose-body advisory exactly as the parser emits it (§5). */
 function warning(
-	command: "agent" | "agent-isolated",
+	command: "agent",
 	optionWithValue: string,
 	firstProseWord: string,
 ): string {
@@ -279,13 +279,11 @@ describe("parseAgentCommand — reading a quoted option value (§3b)", () => {
 });
 
 describe("parseAgentCommand — blocked pi options (§3c, §9)", () => {
-	test("rejects -c / --continue for both agent commands", () => {
-		for (const command of ["agent", "agent-isolated"] as const) {
-			expect(() => parseAgentCommand("-c do it", command)).toThrow(/does not support -c/);
-			expect(() => parseAgentCommand("--continue do it", command)).toThrow(
-				/does not support --continue/,
-			);
-		}
+	test("rejects -c / --continue", () => {
+		expect(() => parseAgentCommand("-c do it", "agent")).toThrow(/does not support -c/);
+		expect(() => parseAgentCommand("--continue do it", "agent")).toThrow(
+			/does not support --continue/,
+		);
 	});
 
 	test("rejects a leading blocked option with a hard error", () => {
@@ -351,14 +349,6 @@ describe("parseAgentCommand — prose-body warnings (§5)", () => {
 				warning("agent", "--thinking --offline", "go"),
 				warning("agent", "--offline", "go"),
 			],
-		});
-	});
-
-	test("renders the actual command name in the warning", () => {
-		expect(parseAgentCommand("hello -m x", "agent-isolated")).toEqual({
-			...base,
-			task: "hello -m x",
-			warnings: [warning("agent-isolated", "-m x", "hello")],
 		});
 	});
 

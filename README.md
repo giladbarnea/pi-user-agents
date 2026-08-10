@@ -22,7 +22,7 @@ pi install npm:@giladbarnea/pi-user-agents
 
 ### 1. Dispatch
 
-`/agent <task>` starts a background agent with the current conversation as its starting context — it knows everything the main agent knows up to that moment. `/agent -i <task>` (or `/agent-isolated`) starts one with a blank slate instead. Dispatch as many as you like; they run concurrently.
+`/agent <task>` starts a background agent with the current conversation as its starting context — it knows everything the main agent knows up to that moment. `/agent -i <task>` starts one with a blank slate instead. Dispatch as many as you like; they run concurrently.
 
 Classic dispatches:
 
@@ -90,10 +90,7 @@ And what you do type by hand is checked live, as you type. Valid options and val
 
 ## Reference
 
-| Command | Meaning |
-|---|---|
-| `/agent [options] <task>` | Dispatch with the current conversation snapshot |
-| `/agent-isolated [options] <task>` | Alias of `/agent -i` — blank-slate dispatch |
+Everything goes through one command: `/agent [options] <task>`.
 
 | Flag | Effect |
 |---|---|
