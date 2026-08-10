@@ -33,6 +33,9 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "pi": {
     "extensions": [
       "./index.ts"
