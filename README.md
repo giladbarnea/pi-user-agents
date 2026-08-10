@@ -82,7 +82,7 @@ Each dispatch takes its own configuration, using the same flags as the `pi` CLI:
 
 Options come first; everything after them is your task, verbatim. The full grammar lives in [PARSER_SPEC.md](PARSER_SPEC.md) — not that you'll need it.
 
-## The editor has your back
+## The fanciest autocomplete in the Pi universe 
 
 You'll rarely type any of this by hand. The moment you type `-`, a completion menu opens — no Tab needed. Anywhere the set of valid values is finite, the editor hands it to you: models, providers, thinking levels, the session's tools, even skill and prompt-template paths. You pick from what actually exists instead of typing and hoping.
 
