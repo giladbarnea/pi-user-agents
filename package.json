@@ -23,7 +23,8 @@
     "*.ts",
     "tool-render",
     "README.md",
-    "PARSER_SPEC.md"
+    "PARSER_SPEC.md",
+    "INTERNALS.md"
   ],
   "scripts": {
     "test": "bun test"

@@ -1,98 +1,42 @@
 # pi-user-agents
 
-You deserve your own agents, too. It's only fair.
+> You deserve your own agents, too. It's only fair.
 
-`pi-user-agents` gives the **user** powerful pulls and levers to run, view and control background agents.
+Pi extensions give your agent subagents. This one gives **you** — the user — your own: background agents you dispatch mid-turn, watch live, steer, and whose results stay **out of the main agent's context** until you decide otherwise.
 
-## Simplest use case
+The moment it's for: your main agent is deep in a tool-calling frenzy on phase 1, and you already know what phase 2 needs.
 
-_Your main agent is in a tool calling frenzy and isn't stopping anytime soon_
+```
+/agent plan the next phase and write it to phase-2.md
+```
 
-You:
+The instant you press Enter, a background agent forks off with a snapshot of the current conversation and gets to work — while your main agent keeps going, none the wiser.
 
-    `/agent` plan the next phase and write to phase-2.md.
+## Install
 
-Immediately, this launches a background fork of your main agent while that one is still working on phase 1.
+```sh
+pi install npm:@giladbarnea/pi-user-agents
+```
 
-When the agent returns, you can view its response.
+## The loop
 
-The fork's session can be viewed, steered and aborted in an overlay.
+### 1. Dispatch
 
-## Usage examples
+`/agent <task>` starts a background agent with the current conversation as its starting context — it knows everything the main agent knows up to that moment. `/agent -i <task>` (or `/agent-isolated`) starts one with a blank slate instead. Dispatch as many as you like; they run concurrently.
 
-### Preserve work before the main agent reaches its context limit
+Classic dispatches:
 
-Suppose your main agent is nearing its context-window limit in the middle of important work. Rather than interrupting it to request a handoff document—or waiting and risking that it hits the limit first—dispatch that task to a background agent:
+```
+/agent write a handoff document for the work currently in progress
+/agent -i -m flash summarize what PARSER_SPEC.md guarantees
+/agent -j --thinking high find the root cause of the flaky widget test
+```
 
-    `/agent` write a handoff document for the work currently in progress.
+The first preserves the session's knowledge before the context window fills, without interrupting the main agent to do it. The second is a cheap, isolated errand. The third auto-joins: its findings are delivered into the main conversation when it finishes.
 
-The fork launches the moment you press Enter, with the current session context, while the main agent continues uninterrupted.
+### 2. Watch
 
-## Commands
-
-- `/agent [pi options] [-m MODELNAME] [-i|--isolate] [-j|--join] <task>` gives the child agent the current session context; pass `-i`/`--isolate` to start it without.
-- `/agent-isolated [pi options] [-m MODELNAME] <task>` is an alias for `/agent -i`.
-
-Put options first. The first word that isn't a recognized option ends option parsing; everything from there is your task, kept verbatim (quotes included).
-
-### Passing pi CLI options through
-
-Leading `pi` CLI options are forwarded to the child agent as if you had launched `pi` with them — `/agent --thinking high plan the migration`, `/agent --tools read,grep review the diff`, or `/agent --system-prompt "be terse" summarize this`. The recognized set is a curated snapshot of `pi --help` (see `PARSER_SPEC.md` for the full grammar). `-m` and `--model` are aliases normalized to Pi's `--model`; `-i`/`--isolate` and `-j`/`--join` are consumed by the extension itself.
-
-An option typed *after* the task has begun stays in the task and triggers an advisory reminder to move it up front. An unrecognized `-`-token — a typo, or a third-party flag this extension doesn't track — is simply left in the prose, no error. A few options are rejected outright because they would derail a one-shot background run: `-c`/`--continue`, singular `--theme <path>`, `--models`, `--export`, `--list-models`, `-h`/`--help`, and `-v`/`--version`. This policy applies to both commands. `--no-themes` remains supported and is forwarded to the child.
-
-To keep an option-looking word in the task, quote it (`summarize "-m stays literal"`) or backslash-escape it (`explain \--thinking`) — quotes stay in the prompt, the leading backslash is removed. An option's value may be quoted to include spaces: `--system-prompt "be terse and precise"`.
-
-### Semantic command coloring
-
-While you type, the editor paints `/agent` and `/agent-isolated` lines from the same
-semantic scan that drives submission parsing (see `PARSER_SPEC.md` §11): the command in the
-theme's `accent`, recognized leading options in `syntaxKeyword`, and valid values (quotes
-included) in `syntaxString`. Invalid thinking levels, unresolved model IDs or aliases, and
-unknown provider or tool names use `error`, as do explicitly blocked Pi options such as
-`-c`/`--continue` and options typed after the task prose has begun — along with their values.
-Validation comes from Pi's argument parser, model resolver, and live catalogs rather than a
-second editor grammar.
-Prose, unknown dash-words, quoted spans, and escaped words stay plain. All colors come from
-the active Pi theme, so custom themes and hot reload apply automatically.
-
-### Eager argument completion
-
-Type `/agent -` or `/agent-isolated -` and the option menu opens immediately—no Tab is required. Short and long aliases appear separately, while using either one hides the whole semantic option from later menus. `/agent-isolated` therefore never recommends `-i` or `--isolate`. Once you begin the task prose, quoted text, or an escaped dash, the option menu stays off.
-
-The finite value menus are thinking levels, live providers, live models, and the session's live tool catalog. Models from the configured `enabledModels` scope lead the unfiltered model menu; once you type a query, Pi's fuzzy relevance controls the order and scope only breaks equal-score ties. `--provider` narrows the model menu for either `-m` or `--model`. A completed boolean, thinking level, provider, or model leaves exactly one trailing space.
-
-`--tools`/`-t` and `--exclude-tools`/`-xt` complete one comma-delimited segment at a time. Accepting `grep` produces `--tools grep│`—the menu closes without inserting a space or comma. Type `,` to open the next segment immediately; already selected tools are omitted. Type a normal space when the tool list is finished.
-
-Free-form values are guarded instead of guessed. Selecting `--system-prompt` produces `/agent --system-prompt "│" `, with the cursor between the quotes and the trailing separator already preserved.
-
-`--extension`/`-e`, `--skill`, and `--prompt-template` are path-valued. Accepting one from the option menu eagerly opens filesystem completion inside its guarded quotes, and manually typing an exact path option plus its value-boundary space now opens the same menu without Tab. Directories continue traversal inside the quotes; accepting a file finishes the quoted path and moves the cursor after the outer space. Completion in the middle changes only the active fragment and preserves everything after it.
-
-Installed skills and prompt templates also appear as named shortcuts from public `pi.getCommands()` entries. Selecting one inserts its public `sourceInfo.path`, while arbitrary filesystem entries remain available in the same menu. Extensions stay filesystem-only because command-backed extension discovery is incomplete. No theme path menu is offered: singular `--theme <path>` remains blocked, while `--no-themes` remains supported.
-
-By default, the entire run stays invisible to the main agent. Each completed result appears as a persisted TUI-only entry. The agent session **stays alive**, so you can steer another turn from its overlay. The agent remains available until you join or dispose it.
-
-With `-j` or `--join`, the selected child conversation enters the main agent context when the turn completes. Pi steers it into a streaming turn or starts a new turn when idle. A `-j` run ends after delivery.
-
-The joined text starts with this sentence:
-
-> The user has dispatched a background sub-agent with a task. The sub-agent is done. The following is the back and forth between them:
-
-A plain `<user_agent>` tag follows it. The tag contains only the model and inherited-context attributes. Its body contains numbered `<user_message>` and `<assistant_response>` tags, indented by two spaces. The first user message contains the original task without the extension's internal process prefix.
-
-One selection rule builds the body. It keeps every user message. Before each next user message, it keeps only the latest assistant response. It applies the same rule after the final user message. Tool calls, thinking, tool results, and other message roles stay out.
-
-An agent launched without `-j` offers `j join` after a turn completes. Pressing it sends the same selected conversation and retires the live session. The context message stays hidden because the TUI-only result card is already visible. Joining is unavailable during a turn, after a join, or for runs launched with `-j`.
-
-The widget below the editor shows in-flight, turn-complete, and finished agents. Use `←` or `↓` to select it, then press `Enter` to open an agent overlay.
-
-Press `x` once to start disposing any agent from the widget or its overlay. The hint changes to `x again to confirm` in the theme's error color. Press `x` again to dispose the agent.
-
-Press `Ctrl+x` on a selected running agent, or inside its overlay, to interrupt only the current turn. The agent becomes idle and remains available for steering, joining when applicable, or disposal.
-
-### Context window meter
-
-Each agent row places a one-cell context meter between the command and its prompt:
+Every agent gets a row in a widget under the editor: status, task, live activity, and a one-cell context meter.
 
 ```text
 ✓ User agents
@@ -101,47 +45,91 @@ Each agent row places a one-cell context meter between the command and its promp
      ⎿  Loaded several large Pi source and documentation...
 ```
 
-The meter shows how much of that child agent's selected model context window is in use. Its nine levels run from an empty cell through `▁▂▃▄▅▆▇█`, matching the custom footer's fill scale. Its colors also match the footer's stages: dim below 40%, muted at 40%, warning at 65%, and error at 85%. This value belongs to the child session, so it can differ from the main session's footer after the child does more work. Completed rows retain their final reading. The extension reads Pi's resolved model and live session context usage, so model-specific limits and configured `contextWindow` overrides are respected; when Pi cannot provide a usage percentage, the meter is omitted rather than guessed.
+Press `←` or `↓` from the editor to focus the widget, pick an agent, press `Enter`, and its overlay opens: the full conversation, streaming live, following the tail as it grows. Scroll up to pause following; `End` resumes it. Tool calls render as proper views — `read`, `edit`, `write`, `grep`, `find`, `ls`, and `bash` each get a dedicated format, everything else a readable generic one.
 
-The overlay shows the full rolling conversation and follows the tail while the agent streams. Scroll up to pause following. Press `End` to resume it. After a turn without `-j` completes, press `j` to join the selected conversation into the main context.
+The context meter is the agent's own footer gauge in one cell: it fills `▁▂▃▄▅▆▇█` against that agent's model context window and shifts color through the same stages as Pi's footer (dim, then muted at 40%, warning at 65%, error at 85%).
 
-## Steering an agent
+### 3. Steer
 
-Press `Enter` in an agent's overlay to open the **Steer** input, and submit a message with `Enter`; `Esc` cancels the composer. While the agent is mid-turn, Pi queues the message after its current tool work, before its next model call. When the agent has completed its turn (green check), the same input starts **another turn** on the still-alive session — the entry flips back to a spinner, and on completion posts a fresh result card and returns to the steerable turn-complete state. Repeat as many times as needed.
+A background agent is not fire-and-forget — it's a session you can talk to.
 
-Turn completion no longer disposes the child session. Only three things do: confirming `x` on the agent, joining it with `j`, or ending the Pi session. A `-j` run is the exception — it delivers its result to the main agent on completion and ends there. After an error or a `-j` completion, the overlay remains available to read the captured transcript or copy the result, but it is no longer interactive.
+Press `Enter` in the overlay to open the steer composer. Mid-turn, your message queues in after the current tool batch, before the next model call — exactly like steering the main agent. After the turn completes, the same composer starts **another turn** on the same live session. Follow up as many times as you need; every completed turn posts its own result card.
 
-## Result delivery — Pi SDK mental model
+`Ctrl+x` interrupts only the current turn — the agent goes idle and stays available for steering, joining, or disposal. In fact, nothing disposes an agent except you: pressing `x` twice, joining it, or ending the Pi session.
 
-How a finished run reaches (or hides from) the main agent rests on two Pi SDK channels with very different context semantics:
+### 4. Join — or don't
 
-- **`pi.sendMessage(message, { deliverAs, triggerTurn })`** — custom messages ALWAYS reach the main agent's LLM context eventually. The options form a first-match-wins chain (see `sendCustomMessage` in pi's `dist/core/agent-session.js`):
-  1. `deliverAs: "nextTurn"` → buffered in memory, spliced in alongside the user's next prompt; `triggerTurn` ignored; not persisted — lost if the session ends first. Still reaches the agent eventually.
-  2. Agent streaming → `"followUp"` queues for after the run finishes; `"steer"` (default) injects after the current tool batch, before the next LLM call. `triggerTurn` ignored. Queues drain before `agent_end` — messages are never dropped.
-  3. Agent idle + `triggerTurn: true` → appended and an LLM turn starts immediately.
-  4. Agent idle otherwise → silently appended to context; the agent sees it on whatever turn comes next.
+This is what makes user agents different from subagents: **by default, the main agent never learns any of this happened.**
 
-  In short: `deliverAs` only matters while streaming; `triggerTurn` only matters while idle.
+Each completed turn posts a result card into your transcript — metadata, a collapsed preview, expandable to the full Markdown response. The card is TUI-only: you read it, expand it, copy it, and the main agent's context is untouched. Ask an agent ten questions and your main agent's token budget doesn't move.
 
-- **`pi.appendEntry(customType, data)` + `pi.registerEntryRenderer`** — the only channel that renders in the transcript while staying out of LLM context *forever*. Entries are persisted in the session file and re-rendered on reload. The entry's `data` is optional in the type — renderers must guard it.
+When a result does belong in the main conversation, join it:
 
-This extension maps the two extremes onto the `-j` flag: the default posts the result card via `appendEntry` (main agent structurally oblivious), and `-j` posts a visible custom message with `{ triggerTurn: true }` (steered mid-turn or answered immediately). Both channels share one card renderer in `transcript.ts`.
+- Dispatch with `-j`/`--join` and the result is delivered automatically on completion.
+- Or press `j` in the overlay of any completed agent, whenever you decide it earned its place.
 
-Immediate `-j` delivery and late `j join` delivery share one canonical message builder. Its `display` option prevents a second visible result card. Both paths use the same selected conversation and `{ triggerTurn: true }` delivery.
+Joining delivers a compact record, not a transcript dump: every message you sent the agent and the final answer to each — no thinking, no tool traffic. The record is rebuilt from the agent's full history at join time, so early turns survive even after the agent compacts its own context. If the main agent is mid-turn, the record is steered in; if idle, it triggers a turn. A joined agent retires; its overlay stays readable.
 
-## Runtime sharing
+## Per-agent configuration
 
-Child agent sessions share the parent's `ModelRuntime` instance. This is critical because extension-registered providers (like `claude-bridge`) use a global `Symbol.for` dedup guard — they register once per process and skip subsequent loads. A child session with its own fresh runtime would never receive the provider, leaving it without auth for bridge-backed models.
+Each dispatch takes its own configuration, using the same flags as the `pi` CLI:
 
-The shared runtime is extracted from the parent's `ModelRegistry` facade (`ctx.modelRegistry`) which wraps a `ModelRuntime` as a plain `.runtime` property.
+```
+/agent -m opus --thinking high design the caching layer
+/agent --tools read,grep,find audit the error handling in src/
+/agent -i --system-prompt "be terse" what does the session-format doc guarantee?
+```
 
-## Model name & alias resolution
+Options come first; the first word that isn't a recognized option starts the task, kept verbatim. An option typed after the task has begun stays in the task and triggers a gentle reminder; an unrecognized dash-word is just prose, not an error. To keep an option-looking word in the task on purpose, quote it (`summarize "-m stays literal"`) or escape it (`explain \--thinking`).
 
-User-defined model aliases (`name` in `models.json` `modelOverrides`) take precedence: `-m opus` resolves to `claude-bridge/claude-opus-4-6` directly, without ambiguity. The extension checks for an exact name match before falling through to the SDK's `resolveCliModel`, which only checks `model.id` (never `model.name`) and otherwise falls back to substring matching — where "opus" collides with dozens of built-in models across the catalog.
+Recognized options include `--model`/`-m`, `--provider`, `--thinking`, `--tools`/`--exclude-tools`, `--system-prompt`, `--extension`, `--skill`, and `--prompt-template` — a curated snapshot of `pi --help` (full grammar in [PARSER_SPEC.md](PARSER_SPEC.md)). Extension-registered providers work too: background agents share the main session's model runtime, so bridge-backed models keep their auth.
 
-> **Note (known issue):** `enabledModels` (i.e., “Scoped models”) currently have no special role in how the extension resolves models. They should be promoted to the same precedence level as user-defined model names in a future fix.
+Model names resolve your `models.json` aliases first, as exact matches — `-m opus` means *your* `opus`, not a fuzzy match across the catalog.
 
-Exact names should be unique: duplicate aliases silently select the first model, and an exact alias match currently ignores `--provider`, even if it names another provider.
+A few options that would derail a one-shot background run are rejected outright: `-c`/`--continue`, `--theme <path>`, `--models`, `--list-models`, `--export`, `-h`, `-v`.
+
+## The editor has your back
+
+Type `/agent -` and the option menu opens — no Tab needed. The menus are live, not hardcoded: actual providers, actual models (your `enabledModels` scope leads), the session's actual tool catalog, thinking levels, and filesystem completion for path-valued options (`--extension`, `--skill`, `--prompt-template` — installed skills and prompt templates appear as named shortcuts). `--tools` completes one comma-separated segment at a time; free-form values like `--system-prompt` land your cursor inside guarded quotes.
+
+As you type, the line is colored by the same parser that runs on submit: the command in accent, recognized options as keywords, valid values as strings — and errors (blocked options, unresolvable models, unknown tools, options typed after the task began) in the theme's error color. What you see is what will parse.
+
+## Reference
+
+| Command | Meaning |
+|---|---|
+| `/agent [options] <task>` | Dispatch with the current conversation snapshot |
+| `/agent-isolated [options] <task>` | Alias of `/agent -i` — blank-slate dispatch |
+
+| Flag | Effect |
+|---|---|
+| `-i`, `--isolate` | Start without the conversation snapshot |
+| `-j`, `--join` | Deliver the result into the main context on completion |
+| `-m MODEL` | Model for this agent (alias of Pi's `--model`) |
+| *pi CLI options* | Forwarded to the agent — `--thinking`, `--tools`, `--system-prompt`, … |
+
+| Where | Key | Action |
+|---|---|---|
+| Editor | `←` / `↓` | Focus the agents widget |
+| Widget | `↑` `↓` · `Enter` | Select an agent · open its overlay |
+| Widget / overlay | `Ctrl+x` | Interrupt the current turn (agent stays alive) |
+| Widget / overlay | `x` `x` | Dispose the agent (twice to confirm) |
+| Widget / overlay | `Esc` | Back |
+| Overlay | `Enter` | Steer mid-turn, or start another turn when idle |
+| Overlay | `j` | Join the conversation into the main context |
+| Overlay | `c` | Copy the latest response |
+| Overlay | scroll · `End` | Pause tail-following · resume it |
+
+## Good to know
+
+- Result cards persist across session reloads; live agent sessions don't. After a reload you keep every card, not the steerable sessions.
+- Some accepted `pi` options have no effect on a background run (the session, approval, offline, API-key, and print families). They parse; they just don't do anything yet.
+- `c` copies via `pbcopy`, so it's macOS-only for now.
+- The overlay caps very large tool outputs and omits thinking entries.
+
+## Under the hood
+
+Design notes — result delivery through the Pi SDK, the joined-message format, runtime sharing, model resolution, and editor internals — live in [INTERNALS.md](INTERNALS.md). The complete command grammar lives in [PARSER_SPEC.md](PARSER_SPEC.md).
 
 ---
 
