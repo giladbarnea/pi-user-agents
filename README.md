@@ -80,19 +80,13 @@ Each dispatch takes its own configuration, using the same flags as the `pi` CLI:
 /agent -i --system-prompt "be terse" what does the session-format doc guarantee?
 ```
 
-Options come first; the first word that isn't a recognized option starts the task, kept verbatim. An option typed after the task has begun stays in the task and triggers a gentle reminder; an unrecognized dash-word is just prose, not an error. To keep an option-looking word in the task on purpose, quote it (`summarize "-m stays literal"`) or escape it (`explain \--thinking`).
-
-Recognized options include `--model`/`-m`, `--provider`, `--thinking`, `--tools`/`--exclude-tools`, `--system-prompt`, `--extension`, `--skill`, and `--prompt-template` — a curated snapshot of `pi --help` (full grammar in [PARSER_SPEC.md](PARSER_SPEC.md)). Extension-registered providers work too: background agents share the main session's model runtime, so bridge-backed models keep their auth.
-
-Model names resolve your `models.json` aliases first, as exact matches — `-m opus` means *your* `opus`, not a fuzzy match across the catalog.
-
-A few options that would derail a one-shot background run are rejected outright: `-c`/`--continue`, `--theme <path>`, `--models`, `--list-models`, `--export`, `-h`, `-v`.
+Options come first; everything after them is your task, verbatim. The full grammar lives in [PARSER_SPEC.md](PARSER_SPEC.md) — not that you'll need it.
 
 ## The editor has your back
 
-Type `/agent -` and the option menu opens — no Tab needed. The menus are live, not hardcoded: actual providers, actual models (your `enabledModels` scope leads), the session's actual tool catalog, thinking levels, and filesystem completion for path-valued options (`--extension`, `--skill`, `--prompt-template` — installed skills and prompt templates appear as named shortcuts). `--tools` completes one comma-separated segment at a time; free-form values like `--system-prompt` land your cursor inside guarded quotes.
+You'll rarely type any of this by hand. The moment you type `-`, a completion menu opens — no Tab needed. Anywhere the set of valid values is finite, the editor hands it to you: models, providers, thinking levels, the session's tools, even skill and prompt-template paths. You pick from what actually exists instead of typing and hoping.
 
-As you type, the line is colored by the same parser that runs on submit: the command in accent, recognized options as keywords, valid values as strings — and errors (blocked options, unresolvable models, unknown tools, options typed after the task began) in the theme's error color. What you see is what will parse.
+And what you do type by hand is checked live, as you type. Valid options and values light up in your theme's syntax colors; anything that won't parse — a blocked option, a model that doesn't resolve, an option stranded after the task began — shows in the error color before you ever press Enter. A `/agent` line that looks right is right.
 
 ## Reference
 
