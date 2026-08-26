@@ -38,7 +38,7 @@ The shared runtime is extracted from the parent's `ModelRegistry` facade (`ctx.m
 
 ## Model name & alias resolution
 
-User-defined model aliases (`name` in `models.json` `modelOverrides`) take precedence: `-m opus` resolves to `claude-bridge/claude-opus-4-6` directly, without ambiguity. The extension checks for an exact name match before falling through to the SDK's `resolveCliModel`, which only checks `model.id` (never `model.name`) and otherwise falls back to substring matching — where "opus" collides with dozens of built-in models across the catalog.
+User-defined model aliases (`name` in `models.json` `modelOverrides`) take precedence: `-m opus` resolves to `claude-bridge/claude-opus-4-6` directly, without ambiguity. Other model values must exactly match a live model ID or canonical `provider/id` reference before the extension calls the SDK's `resolveCliModel`. Partial and custom model IDs are rejected.
 
 > **Note (known issue):** `enabledModels` (i.e., “Scoped models”) currently have no special role in how the extension resolves models. They should be promoted to the same precedence level as user-defined model names in a future fix.
 
@@ -48,7 +48,7 @@ Exact names should be unique: duplicate aliases silently select the first model,
 
 ### Semantic command coloring
 
-While you type, the editor paints `/agent` lines from the same semantic scan that drives submission parsing (see `PARSER_SPEC.md` §11): the command in the theme's `accent`, recognized leading options in `syntaxKeyword`, and valid values (quotes included) in `syntaxString`. Invalid thinking levels, unresolved model IDs or aliases, and unknown provider or tool names use `error`, as do explicitly blocked Pi options such as `-c`/`--continue` and options typed after the task prose has begun — along with their values. Validation comes from Pi's argument parser, model resolver, and live catalogs rather than a second editor grammar. Prose, unknown dash-words, quoted spans, and escaped words stay plain. All colors come from the active Pi theme, so custom themes and hot reload apply automatically.
+While you type, the editor paints `/agent` lines from the same semantic scan that drives submission parsing (see `PARSER_SPEC.md` §11): the command in the theme's `accent`, recognized leading options in `syntaxType`, and valid values (quotes included) in `syntaxString`. Invalid thinking levels, unresolved model IDs or aliases, and unknown provider or tool names use `error`, including blocked Pi options such as `-c`/`--continue` and `-p`/`--print`, plus options typed after the task prose has begun — along with their values. Validation comes from Pi's argument parser, model resolver, and live catalogs rather than a second editor grammar. Prose, unknown dash-words, quoted spans, and escaped words stay plain. All colors come from the active Pi theme, so custom themes and hot reload apply automatically.
 
 ### Eager argument completion
 

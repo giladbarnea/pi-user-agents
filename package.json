@@ -23,6 +23,7 @@
   "files": [
     "*.ts",
     "tool-render",
+    "screenshots",
     "README.md",
     "PARSER_SPEC.md",
     "INTERNALS.md",

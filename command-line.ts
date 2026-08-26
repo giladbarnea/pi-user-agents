@@ -292,13 +292,13 @@ function booleanOptionsWithoutChildEffect(): AgentOptionDefinition[] {
 		legacyBooleanOption("approve", ["--approve", "-a"]),
 		legacyBooleanOption("no-approve", ["--no-approve", "-na"]),
 		legacyBooleanOption("offline", ["--offline"]),
-		legacyBooleanOption("print", ["--print", "-p"]),
 	];
 }
 
 function blockedOptions(): AgentOptionDefinition[] {
 	return [
 		blockedOption("continue", ["-c", "--continue"]),
+		blockedOption("print", ["-p", "--print"]),
 		blockedOption("theme", ["--theme"], "value"),
 		blockedOption("models", ["--models"]),
 		blockedOption("export", ["--export"]),

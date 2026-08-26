@@ -239,6 +239,30 @@ export function createAgentValueValidator(
 	};
 }
 
+/**
+ * Return whether a model value exactly names a live ID, canonical reference, or user alias.
+ *
+ * @example isExactCatalogModelReference([{ provider: "openai", id: "gpt-5" } as Model], "openai/gpt-5") // true
+ */
+function isExactCatalogModelReference(
+	models: readonly Model[],
+	value: string,
+	provider: string | undefined,
+): boolean {
+	const normalizedValue = value.toLowerCase();
+	const normalizedProvider = provider?.toLowerCase();
+	const exactAliasMatch = models.some(
+		(model) => model.name?.toLowerCase() === normalizedValue,
+	);
+	const exactReferenceMatch = models.some(
+		(model) =>
+			(normalizedProvider === undefined || model.provider.toLowerCase() === normalizedProvider) &&
+			(model.id.toLowerCase() === normalizedValue ||
+				`${model.provider}/${model.id}`.toLowerCase() === normalizedValue),
+	);
+	return exactAliasMatch || exactReferenceMatch;
+}
+
 /** Resolve forwarded runtime options against the child session's model runtime. */
 export function resolveForwardedOptions(
 	parsed: Args,
@@ -246,6 +270,10 @@ export function resolveForwardedOptions(
 ): ForwardedOptions {
 	const forwarded: ForwardedOptions = {};
 	if (parsed.model) {
+		if (!isExactCatalogModelReference(modelRuntime.getModels(), parsed.model, parsed.provider)) {
+			const display = parsed.provider ? `${parsed.provider}/${parsed.model}` : parsed.model;
+			throw new Error(`Model "${display}" not found in the live model catalog.`);
+		}
 		const nameMatch = modelRuntime
 			.getModels()
 			.find((m) => m.name?.toLowerCase() === parsed.model!.toLowerCase());

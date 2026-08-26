@@ -11,7 +11,7 @@ export type StyleTheme = { fg(color: ThemeColor, text: string): string };
 
 export const AGENT_SEMANTIC_COLORS: Record<AgentTokenSemantic | "command", ThemeColor> = {
 	command: "accent",
-	option: "syntaxKeyword",
+	option: "syntaxType",
 	value: "syntaxString",
 	"invalid-value": "error",
 	blocked: "error",
@@ -36,7 +36,7 @@ type ColoredEditor = ColoringRuntimeEditor & { [COLORED_EDITOR]?: true };
  * Map an editor line to theme-colored spans via the shared semantic scan.
  * Returns undefined for lines that are not agent commands.
  *
- * @example computeAgentColorSpans("/agent -m gpt56s go")?.[1] // { start: 7, end: 9, color: "syntaxKeyword" }
+ * @example computeAgentColorSpans("/agent -m gpt56s go")?.[1] // { start: 7, end: 9, color: "syntaxType" }
  */
 export function computeAgentColorSpans(
 	line: string,

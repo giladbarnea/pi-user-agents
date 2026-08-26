@@ -158,18 +158,6 @@ describe("parseAgentCommand — known pi option arity from the static table (§3
 		});
 	});
 
-	test("models --print / -p as boolean so the optional-value form cannot eat the next prose word", () => {
-		expect(parseAgentCommand("--print do it", "agent")).toEqual({
-			...base,
-			forwardedArgs: ["--print"],
-			task: "do it",
-		});
-		expect(parseAgentCommand("-p do it", "agent")).toEqual({
-			...base,
-			forwardedArgs: ["-p"],
-			task: "do it",
-		});
-	});
 
 	test("a value option swallows a following option-looking token as its verbatim value", () => {
 		expect(parseAgentCommand("--thinking --offline do it", "agent")).toEqual({
@@ -279,11 +267,12 @@ describe("parseAgentCommand — reading a quoted option value (§3b)", () => {
 });
 
 describe("parseAgentCommand — blocked pi options (§3c, §9)", () => {
-	test("rejects -c / --continue", () => {
-		expect(() => parseAgentCommand("-c do it", "agent")).toThrow(/does not support -c/);
-		expect(() => parseAgentCommand("--continue do it", "agent")).toThrow(
-			/does not support --continue/,
-		);
+	test("rejects continuation and print options", () => {
+		for (const option of ["-c", "--continue", "-p", "--print"]) {
+			expect(() => parseAgentCommand(`${option} do it`, "agent")).toThrow(
+				`/agent does not support ${option}`,
+			);
+		}
 	});
 
 	test("rejects a leading blocked option with a hard error", () => {
@@ -545,9 +534,15 @@ describe("resolveForwardedOptions — static-arity forwarding (§7)", () => {
 		expect(resolve(["--thinking", "high"])).toEqual({ thinkingLevel: "high" });
 	});
 
-	test("resolves --model through ModelRuntime", () => {
+	test("resolves an exact --model through ModelRuntime", () => {
 		const model = resolve(["--model", "openai-codex/gpt-5.6-luna"]).model;
 		expect(model && `${model.provider}/${model.id}`).toBe("openai-codex/gpt-5.6-luna");
+	});
+
+	test("rejects partial and custom model IDs outside the live catalog", () => {
+		for (const model of ["openai-codex/gpt-5.6-lun", "openai-codex/not-in-catalog"]) {
+			expect(() => resolve(["--model", model])).toThrow(`Model "${model}" not found`);
+		}
 	});
 
 	test("maps tool options", () => {

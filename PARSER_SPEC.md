@@ -45,9 +45,10 @@ leading whitespace (unchanged from today).
 | `-i`, `--isolate` | boolean | Consumed here; `isolate = true` |
 | `-j`, `--join` | boolean | Consumed here; `context = true` |
 
-`-m` and `--model` are one semantic option. Both resolve once through Pi's
-`resolveCliModel()` path, and a preceding `--provider` scopes either spelling. `-j` is the
-extension's join option. A model option with no value and no remaining task ends in the normal
+`-m` and `--model` are one semantic option. Both require an exact live model ID, canonical
+`provider/id` reference, or user-defined alias before resolving through Pi's `resolveCliModel()`
+path. A preceding `--provider` scopes either spelling. `-j` is the extension's join option.
+A model option with no value and no remaining task ends in the normal
 **usage error**.
 
 ### 3b. Known pi options — declared statically; added to `forwardedArgs`
@@ -59,8 +60,7 @@ extension's join option. A model option with no value and no remaining task ends
 **Boolean** (consume no value):
 `--resume`/`-r`, `--no-session`, `--no-tools`/`-nt`, `--no-builtin-tools`/`-nbt`,
 `--no-extensions`/`-ne`, `--no-skills`/`-ns`, `--no-prompt-templates`/`-np`, `--no-themes`,
-`--no-context-files`/`-nc`, `--verbose`, `--approve`/`-a`, `--no-approve`/`-na`, `--offline`,
-`--print`/`-p`.
+`--no-context-files`/`-nc`, `--verbose`, `--approve`/`-a`, `--no-approve`/`-na`, `--offline`.
 
 Notes:
 - The shared declaration is a snapshot of `pi --help`; it is maintained by hand. There is no
@@ -77,7 +77,6 @@ Notes:
   The dequoted value is stored as **one element** in `forwardedArgs`
   (e.g. `["--system-prompt", "I am psyched"]`), so pi's `parseArgs` maps it as a single value.
   If a value opens with a quote but has no matching close, fall back to the whitespace-delimited token.
-- `--print`/`-p` is modeled as **boolean** here (pi's optional-value form would eat prose).
 
 Value examples:
 - `--system-prompt "I am psyched"` → value `I am psyched`.
@@ -86,8 +85,8 @@ Value examples:
 - `-m "gpt56s"` → `forwardedArgs` contains `--model`, `gpt56s`.
 
 ### 3c. Blocked pi options — rejected
-`-c`/`--continue`, `--theme <path>`, `--models`, `--export`, `--list-models`, `-h`/`--help`,
-`-v`/`--version`.
+`-c`/`--continue`, `-p`/`--print`, `--theme <path>`, `--models`, `--export`, `--list-models`,
+`-h`/`--help`, `-v`/`--version`.
 Appearing in **args mode** (leading) → hard **error**:
 `"/agent does not support <opt>; it would disrupt the background agent run."`
 
@@ -239,10 +238,9 @@ source spans:
 - `option` — a recognized, non-blocked leading option (extension-owned or forwarded);
 - `value` — the value consumed by a leading value-taking option. A quoted value's span
   includes its surrounding quotes;
-- `invalid-value` — a leading closed-set value rejected by the same canonical validation
-  used at submission and session creation: Pi's argument parser for thinking levels, the
-  child model resolver for model IDs and user-defined aliases, and the live provider and
-  tool catalogs;
+- `invalid-value` — a leading closed-set value rejected by the same validation used at
+  submission and session creation: Pi's argument parser for thinking levels, exact live model
+  IDs or user-defined aliases, and the live provider and tool catalogs;
 - `blocked` — a blocked option in args mode, plus the value a blocked value-taking option
   would consume (`--theme ./theme.json` yields two `blocked` tokens). Unlike
   `parseAgentCommand`, the scan never throws: it records the first blocked token and keeps
@@ -259,6 +257,6 @@ prose → usage error), so parsing and coloring cannot drift.
 cursor analysis (§10) and shifts token spans into editor-line coordinates.
 
 The editor coloring layer (`editor-coloring.ts`) maps token semantics onto Pi theme
-variables — command `accent`, options `syntaxKeyword`, valid values `syntaxString`, and
+variables — command `accent`, options `syntaxType`, valid values `syntaxString`, and
 invalid, blocked, or misplaced tokens `error` — by repainting the laid-out chunk text after
 word-wrap layout, so editing, wrapping, cursor behavior, and autocomplete are untouched.

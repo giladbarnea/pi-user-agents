@@ -6,7 +6,7 @@ import { createEditorHarness } from "./editor-harness.ts";
 
 const SGR_OPEN: Record<string, string> = {
 	accent: "\x1b[38;5;110m",
-	syntaxKeyword: "\x1b[38;5;111m",
+	syntaxType: "\x1b[38;5;111m",
 	syntaxString: "\x1b[38;5;112m",
 	error: "\x1b[38;5;113m",
 };
@@ -100,7 +100,7 @@ describe("computeAgentColorSpans — theme-variable palette", () => {
 	test("maps semantic tokens onto theme colors", () => {
 		assert.deepEqual(computeAgentColorSpans("/agent -m gpt56s fix"), [
 			{ start: 0, end: 6, color: "accent" },
-			{ start: 7, end: 9, color: "syntaxKeyword" },
+			{ start: 7, end: 9, color: "syntaxType" },
 			{ start: 10, end: 16, color: "syntaxString" },
 		]);
 	});
@@ -118,7 +118,7 @@ describe("editor semantic coloring", () => {
 		});
 		harness.type("/agent --thinking high fix it");
 		const rendered = harness.renderRaw();
-		const expected = `${colored("accent", "/agent")} ${colored("syntaxKeyword", "--thinking")} ${colored("syntaxString", "high")} fix it${CURSOR_OPEN} ${CURSOR_CLOSE}`;
+		const expected = `${colored("accent", "/agent")} ${colored("syntaxType", "--thinking")} ${colored("syntaxString", "high")} fix it${CURSOR_OPEN} ${CURSOR_CLOSE}`;
 		assert.ok(
 			rendered.includes(expected),
 			`Expected semantic coloring with plain prose.\nRendered:\n${JSON.stringify(rendered)}`,
@@ -139,8 +139,8 @@ describe("editor semantic coloring", () => {
 		);
 	});
 
-	test("paints both spellings of the blacklisted continue option as errors", async () => {
-		for (const option of ["-c", "--continue"]) {
+	test("paints unsupported continuation and print options as errors", async () => {
+		for (const option of ["-c", "--continue", "-p", "--print"]) {
 			const harness = await createEditorHarness(undefined, [], [], [], {
 				themeFg: createMarkingThemeFg(new Set()),
 			});
@@ -159,11 +159,16 @@ describe("editor semantic coloring", () => {
 			assert.ok(harness.renderRaw().includes(`${colored("syntaxString", value)} fix`));
 		}
 
-		const harness = await createEditorHarness(undefined, models, [], [], {
-			themeFg: createMarkingThemeFg(new Set()),
-		});
-		harness.type("/agent -m no-such-model fix");
-		assert.ok(harness.renderRaw().includes(`${colored("error", "no-such-model")} fix`));
+		for (const value of ["openai-codex/gpt-5.6-so", "no-such-model"]) {
+			const harness = await createEditorHarness(undefined, models, [], [], {
+				themeFg: createMarkingThemeFg(new Set()),
+			});
+			harness.type(`/agent -m ${value} fix`);
+			assert.ok(
+				harness.renderRaw().includes(`${colored("error", value)} fix`),
+				`Expected the non-exact model ${value} to use the error color`,
+			);
+		}
 	});
 
 	test("uses Pi's canonical thinking-level parser to reject invalid values", async () => {
@@ -206,7 +211,7 @@ describe("editor semantic coloring", () => {
 		harness.type("/agent --thinking");
 		harness.moveCursorLeft(3);
 		const rendered = harness.renderRaw();
-		const expected = `${colored("syntaxKeyword", "--think")}${CURSOR_OPEN}i${CURSOR_CLOSE}${colored("syntaxKeyword", "ng")}`;
+		const expected = `${colored("syntaxType", "--think")}${CURSOR_OPEN}i${CURSOR_CLOSE}${colored("syntaxType", "ng")}`;
 		assert.ok(
 			rendered.includes(expected),
 			`Expected the colored token to split cleanly around the cursor.\nRendered:\n${JSON.stringify(rendered)}`,
@@ -245,7 +250,7 @@ describe("editor semantic coloring", () => {
 		);
 		harness.type("/agent --continue -m gpt56s fix -t x");
 		harness.renderRaw();
-		assert.deepEqual([...usedColors].sort(), ["accent", "error", "syntaxKeyword", "syntaxString"]);
+		assert.deepEqual([...usedColors].sort(), ["accent", "error", "syntaxString", "syntaxType"]);
 	});
 
 	test("autocomplete still opens and applies completions over colored input", async () => {
@@ -260,6 +265,6 @@ describe("editor semantic coloring", () => {
 		await harness.waitForAutocomplete();
 		harness.press("\t");
 		assert.equal(harness.editor.getText(), "/agent -m ");
-		assert.ok(harness.renderRaw().includes(colored("syntaxKeyword", "-m")));
+		assert.ok(harness.renderRaw().includes(colored("syntaxType", "-m")));
 	});
 });

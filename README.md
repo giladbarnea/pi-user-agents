@@ -36,16 +36,25 @@ The first preserves the session's knowledge before the context window fills, wit
 
 ### 2. Watch
 
-Every agent gets a row in a widget under the editor: status, task, live activity, and a one-cell context meter.
+Every agent gets a row in a widget under the editor: status, task, model, turn count, tool uses, elapsed time, a one-cell context meter, and the last line of live activity.
 
-```text
-✓ User agents
-  ↑↓ select · Enter view · x dispose · Esc back
-└─ ⏺ ✓ /agent ▇ i am testing the widget now - read a ton...
-     ⎿  Loaded several large Pi source and documentation...
-```
+<a href="screenshots/below-editor-widget.png">
+  <img src="screenshots/below-editor-widget.png" width="100%" alt="The user agents widget under the editor, showing one finished agent and its latest output">
+</a>
+
+<div align="center"><em>The widget sits under the editor and stays out of your way.</em></div>
+
+<br>
 
 Press `←` or `↓` from the editor to focus the widget, pick an agent, press `Enter`, and its overlay opens: the full conversation, streaming live, following the tail as it grows. Scroll up to pause following; `End` resumes it. Tool calls render as proper views — `read`, `edit`, `write`, `grep`, `find`, `ls`, and `bash` each get a dedicated format, everything else a readable generic one.
+
+<a href="screenshots/overlay.png">
+  <img src="screenshots/overlay.png" width="100%" alt="The agent overlay: a rendered bash call, its output, a todo update, and the final response, over the dimmed main conversation">
+</a>
+
+<div align="center"><em>The overlay, over a main conversation that never paused.</em></div>
+
+<br>
 
 The context meter is the agent's own footer gauge in one cell: it fills `▁▂▃▄▅▆▇█` against that agent's model context window and shifts color through the same stages as Pi's footer (dim, then muted at 40%, warning at 65%, error at 85%).
 
@@ -114,7 +123,7 @@ Everything goes through one command: `/agent [options] <task>`.
 ## Good to know
 
 - Result cards persist across session reloads; live agent sessions don't. After a reload you keep every card, not the steerable sessions.
-- Some accepted `pi` options have no effect on a background run (the session, approval, offline, API-key, and print families). They parse; they just don't do anything yet.
+- Some accepted `pi` options have no effect on a background run (the session, approval, offline, and API-key families). They parse; they just don't do anything yet.
 - `c` copies via `pbcopy`, so it's macOS-only for now.
 - The overlay caps very large tool outputs and omits thinking entries.
 
