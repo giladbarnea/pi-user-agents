@@ -1,9 +1,13 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import {
 	buildChildResourceLoaderOptions,
 	parseAgentCommand,
 	parseForwardedArgs,
+	persistInheritedMessages,
 	resolveForwardedOptions,
 	runChildTurns,
 	waitForInstruction,
@@ -584,6 +588,101 @@ describe("resolveForwardedOptions — static-arity forwarding (§7)", () => {
 	});
 });
 
+describe("persistInheritedMessages — the child session file is resumable", () => {
+	function roundTrip(messages: AgentMessage[]): { messages: AgentMessage[]; entryTypes: string[] } {
+		const sessionDirectory = mkdtempSync(join(tmpdir(), "pi-user-agents-"));
+		try {
+			const sessionManager = SessionManager.create("/tmp/project", sessionDirectory);
+			persistInheritedMessages(sessionManager, messages);
+			const sessionFile = sessionManager.getSessionFile();
+			expect(sessionFile, "Expected the child session to have a file path").toBeString();
+			const reopened = SessionManager.open(sessionFile as string);
+			return {
+				messages: reopened.buildSessionContext().messages,
+				entryTypes: reopened.getEntries().map((entry) => entry.type),
+			};
+		} finally {
+			rmSync(sessionDirectory, { recursive: true, force: true });
+		}
+	}
+
+	test("a reopened child session sees the same conversation the live child inherited", () => {
+		const inherited = [
+			{ role: "user", content: "review the migration", timestamp: 1 },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "reviewed" }],
+				timestamp: 2,
+				stopReason: "stop",
+			},
+			{
+				role: "custom",
+				customType: "pi-user-agents",
+				content: "<user_agent>an earlier result card</user_agent>",
+				display: false,
+				timestamp: 3,
+			},
+		] as AgentMessage[];
+
+		const restored = roundTrip(inherited);
+
+		expect(restored.messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+			"custom",
+		]);
+		expect(restored.messages[0]).toMatchObject({ role: "user", content: "review the migration" });
+		expect(restored.messages[2]).toMatchObject({
+			role: "custom",
+			customType: "pi-user-agents",
+			display: false,
+		});
+		expect(
+			restored.entryTypes,
+			"Expected a result card the child inherited to be stored as pi's own custom_message entry",
+		).toEqual(["message", "message", "custom_message"]);
+	});
+
+	test("a snapshot taken after the main session compacted or branched keeps its summaries", () => {
+		const inherited = [
+			{
+				role: "compactionSummary",
+				summary: "everything before the compaction",
+				tokensBefore: 90_000,
+				timestamp: 1,
+			},
+			{ role: "user", content: "carry on", timestamp: 2 },
+			{ role: "branchSummary", summary: "the path we abandoned", fromId: "e7", timestamp: 3 },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "carrying on" }],
+				timestamp: 4,
+				stopReason: "stop",
+			},
+		] as AgentMessage[];
+
+		const restored = roundTrip(inherited);
+
+		expect(restored.messages.map((message) => message.role)).toEqual([
+			"compactionSummary",
+			"user",
+			"branchSummary",
+			"assistant",
+		]);
+		expect(restored.messages[0]).toMatchObject({
+			role: "compactionSummary",
+			summary: "everything before the compaction",
+			tokensBefore: 90_000,
+		});
+		// Stored as pi's own summary entries, not as ordinary messages: pi's compaction and branch
+		// bookkeeping finds boundaries by entry type, so a plain message entry would hide them.
+		expect(
+			restored.entryTypes,
+			"Expected summaries to be stored as compaction and branch_summary entries",
+		).toEqual(["compaction", "message", "branch_summary", "message"]);
+	});
+});
+
 describe("waitForInstruction — idle lifecycle parking", () => {
 	function idleAgent(): RunningAgentForTest {
 		return {
@@ -663,6 +762,7 @@ describe("runChildTurns — main-context delivery", () => {
 		} as unknown as NonNullable<RunningAgent["session"]>;
 		const agent = {
 			id: "user-1",
+			sessionId: "session-1",
 			command: "agent",
 			inheritedContext: true,
 			model: "provider/model",
@@ -748,6 +848,7 @@ describe("runChildTurns — main-context delivery", () => {
 		} as unknown as NonNullable<RunningAgent["session"]>;
 		const agent = {
 			id: "user-1",
+			sessionId: "session-1",
 			command: "agent",
 			inheritedContext: true,
 			model: "provider/model",

@@ -64,9 +64,19 @@ A background agent is not fire-and-forget — it's a session you can talk to.
 
 Press `Enter` in the overlay to open the steer composer. Mid-turn, your message queues in after the current tool batch, before the next model call — exactly like steering the main agent. After the turn completes, the same composer starts **another turn** on the same live session. Follow up as many times as you need; every completed turn posts its own result card.
 
-`Ctrl+x` interrupts only the current turn — the agent goes idle and stays available for steering, joining, or disposal. In fact, nothing disposes an agent except you: pressing `x` twice, joining it, or ending the Pi session.
+`Ctrl+x` interrupts only the current turn — the agent goes idle and stays available for steering, joining, or detaching. In fact, nothing ends an agent except you: pressing `d` twice, joining it, or ending the Pi session.
 
-### 4. Join — or don't
+### 4. Detach
+
+Every dispatched agent gets its own Pi session on disk, exactly like the one you're sitting in. When a row has served its purpose, press `d` twice: the agent stops, its row leaves the widget, and its session file is left untouched. The transcript records which one it was:
+
+```
+Detached session 0199c4f2-8b1a-7c3d-9e05-6a2f18d7b4ce
+```
+
+Pick it back up whenever you like — `/resume 0199c4f2`, or `pi -r` and choose it from the list. It resumes as an ordinary Pi session with its full history, its model, and its thinking level, and from there it is a normal agent you talk to directly.
+
+### 5. Join — or don't
 
 This is what makes user agents different from subagents: **by default, the main agent never learns any of this happened.**
 
@@ -113,7 +123,7 @@ Everything goes through one command: `/agent [options] <task>`.
 | Editor | `←` / `↓` | Focus the agents widget |
 | Widget | `↑` `↓` · `Enter` | Select an agent · open its overlay |
 | Widget / overlay | `Ctrl+x` | Interrupt the current turn (agent stays alive) |
-| Widget / overlay | `x` `x` | Dispose the agent (twice to confirm) |
+| Widget / overlay | `d` `d` | Detach the agent, keeping its session (twice to confirm) |
 | Widget / overlay | `Esc` | Back |
 | Overlay | `Enter` | Steer mid-turn, or start another turn when idle |
 | Overlay | `j` | Join the conversation into the main context |
@@ -122,7 +132,8 @@ Everything goes through one command: `/agent [options] <task>`.
 
 ## Good to know
 
-- Result cards persist across session reloads; live agent sessions don't. After a reload you keep every card, not the steerable sessions.
+- Every dispatch writes a real session file, so dispatched agents show up in `/resume` and `pi -r` alongside your own sessions. An agent that never answered leaves no file.
+- Result cards persist across session reloads; the widget doesn't. After a reload you keep every card, and every agent's session is still on disk — but the steerable rows are gone. Reach them with `/resume`.
 - Some accepted `pi` options have no effect on a background run (the session, approval, offline, and API-key families). They parse; they just don't do anything yet.
 - `c` copies via `pbcopy`, so it's macOS-only for now.
 - The overlay caps very large tool outputs and omits thinking entries.

@@ -32,7 +32,7 @@ import {
 } from "./tool-render/index.js";
 
 export type ViewableAgent = RunningAgent | CompletedAgent;
-export type AgentViewerAction = "hide" | "dispose";
+export type AgentViewerAction = "hide" | "detach";
 
 export type ActivityDescription = {
 	text: string;
@@ -141,7 +141,7 @@ function truncateMiddle(
 
 const VIEWER_CHROME_LINES = 6;
 const VIEWER_MIN_VIEWPORT = 3;
-const VIEWER_HEIGHT_PCT = 70;
+const VIEWER_HEIGHT_PCT = 85;
 
 /** Focus-capturing overlay that shows an agent's live or finished response. */
 export class AgentViewer implements Component {
@@ -149,7 +149,7 @@ export class AgentViewer implements Component {
 	private autoScroll = true;
 	private lastWidth = 0;
 	private justCopied = false;
-	private confirmingDispose = false;
+	private confirmingDetach = false;
 	private composer: Input | undefined;
 	/** Rich tool rendering is far too costly to repeat on every 100 ms widget tick. */
 	private renderedContent: { key: string; lines: string[] } | undefined;
@@ -166,22 +166,22 @@ export class AgentViewer implements Component {
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "ctrl+x") && isLiveAgent(this.agent)) {
-			this.confirmingDispose = false;
+			this.confirmingDetach = false;
 			this.interrupt();
 			this.tui.requestRender();
 			return;
 		}
 		if (this.composer) {
-			this.confirmingDispose = false;
+			this.confirmingDetach = false;
 			this.composer.handleInput(data);
 			this.tui.requestRender();
 			return;
 		}
-		if (matchesKey(data, "x")) {
-			this.requestDispose();
+		if (matchesKey(data, "d")) {
+			this.requestDetach();
 			return;
 		}
-		this.confirmingDispose = false;
+		this.confirmingDetach = false;
 		if (matchesKey(data, "escape") || matchesKey(data, "q")) {
 			this.done("hide");
 			return;
@@ -253,6 +253,7 @@ export class AgentViewer implements Component {
 			renderAgentContextMeter(this.agent, th),
 			th.fg("dim", status),
 			...stats.map((stat) => th.fg("dim", stat)),
+			th.fg("dim", this.agent.sessionId),
 		]
 			.filter(Boolean)
 			.join(` ${th.fg("dim", "·")} `);
@@ -310,8 +311,8 @@ export class AgentViewer implements Component {
 					mainContext ? th.fg("dim", mainContext) : "",
 					isLiveAgent(this.agent) ? th.fg("dim", "Esc hide") : "",
 					th.fg(
-						this.confirmingDispose ? "error" : "dim",
-						this.confirmingDispose ? "x again to confirm" : "x dispose",
+						this.confirmingDetach ? "error" : "dim",
+						this.confirmingDetach ? "d again to confirm" : "d detach",
 					),
 				].filter(Boolean),
 			);
@@ -325,12 +326,12 @@ export class AgentViewer implements Component {
 
 	dispose(): void {}
 
-	private requestDispose(): void {
-		if (this.confirmingDispose) {
-			this.done("dispose");
+	private requestDetach(): void {
+		if (this.confirmingDetach) {
+			this.done("detach");
 			return;
 		}
-		this.confirmingDispose = true;
+		this.confirmingDetach = true;
 		this.tui.requestRender();
 	}
 

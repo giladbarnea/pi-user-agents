@@ -40,6 +40,10 @@ export type AgentEntryData = {
 	details: AgentCommandDetails;
 };
 
+export type DetachedEntryData = {
+	sessionId: string;
+};
+
 export type AgentResultMessage = {
 	customType: string;
 	content: string;
@@ -67,6 +71,8 @@ export type AgentCommandDetails = {
 
 export type RunningAgent = {
 	id: string;
+	/** The child's own Pi session, resumable with `/resume <sessionId>` after the agent is detached. */
+	sessionId: string;
 	command: AgentCommandName;
 	inheritedContext: boolean;
 	model: string;
@@ -106,6 +112,7 @@ export type RunningAgent = {
 
 export type CompletedAgent = {
 	id: string;
+	sessionId: string;
 	command: AgentCommandName;
 	modelLabel: string;
 	task: string;
@@ -123,6 +130,7 @@ export type CompletedAgent = {
 };
 
 export const MESSAGE_TYPE = "pi-user-agents";
+export const DETACHED_ENTRY_TYPE = "pi-user-agents-detached";
 export const WIDGET_KEY = "pi-user-agents";
 export const STEERING_LOG_PATH = `${tmpdir()}/pi-user-agents-steer.log`;
 

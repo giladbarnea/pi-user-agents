@@ -5,10 +5,12 @@ import type {
 	AgentEntryData,
 	AgentMessage,
 	AgentResultMessage,
+	DetachedEntryData,
 	ExtensionAPI,
 	RunningAgent,
 	Theme,
 } from "../shared.js";
+import { DETACHED_ENTRY_TYPE, MESSAGE_TYPE } from "../shared.js";
 import {
 	buildAgentResultMessage,
 	formatStartNotification,
@@ -19,6 +21,7 @@ import {
 function completedAgent(): RunningAgent {
 	return {
 		id: "user-1",
+		sessionId: "session-1",
 		command: "agent",
 		inheritedContext: true,
 		model: "provider/model",
@@ -288,11 +291,11 @@ describe("completed agent transcript card", () => {
 			  ) => RenderedComponent)
 			| undefined;
 		const pi = {
-			registerMessageRenderer: (_customType: string, renderer: typeof renderMessage) => {
-				renderMessage = renderer;
+			registerMessageRenderer: (customType: string, renderer: typeof renderMessage) => {
+				if (customType === MESSAGE_TYPE) renderMessage = renderer;
 			},
-			registerEntryRenderer: (_customType: string, renderer: typeof renderEntry) => {
-				renderEntry = renderer;
+			registerEntryRenderer: (customType: string, renderer: typeof renderEntry) => {
+				if (customType === MESSAGE_TYPE) renderEntry = renderer;
 			},
 		} as unknown as ExtensionAPI;
 		registerUserAgentRenderer(pi);
@@ -306,7 +309,7 @@ describe("completed agent transcript card", () => {
 			"",
 			"## Full finding",
 			"",
-			"The persisted response remains available after the child session is disposed.",
+			"The persisted response remains available after the child session is detached.",
 		].join("\n");
 		const message = buildAgentResultMessage(
 			agent,
@@ -340,7 +343,7 @@ describe("completed agent transcript card", () => {
 			);
 			expect(expandedOutput).toContain("Full finding");
 			expect(expandedOutput).toContain(
-				"The persisted response remains available after the child session is disposed.",
+				"The persisted response remains available after the child session is detached.",
 			);
 		}
 
@@ -377,5 +380,41 @@ describe("completed agent transcript card", () => {
 			?.render(120)
 			.join("\n");
 		expect(legacyOutput).toContain("A full response from an older persisted entry.");
+	});
+});
+
+describe("detached session entry", () => {
+	test("names the session the user can resume, and stays quiet without one", () => {
+		initTheme(undefined, false);
+		type RenderedComponent = { render(width: number): string[] } | undefined;
+		let renderDetached:
+			| ((
+					entry: { data?: DetachedEntryData },
+					options: { expanded: boolean },
+					theme: Theme,
+			  ) => RenderedComponent)
+			| undefined;
+		const pi = {
+			registerMessageRenderer: () => undefined,
+			registerEntryRenderer: (customType: string, renderer: typeof renderDetached) => {
+				if (customType === DETACHED_ENTRY_TYPE) renderDetached = renderer;
+			},
+		} as unknown as ExtensionAPI;
+		registerUserAgentRenderer(pi);
+		const identityTheme = {
+			bold: (text: string) => text,
+			fg: (_color: string, text: string) => text,
+		} as Theme;
+
+		const rendered = renderDetached
+			?.({ data: { sessionId: "0199-abcd" } }, { expanded: false }, identityTheme)
+			?.render(120)
+			.join("\n");
+
+		expect(rendered?.trim()).toBe("Detached session 0199-abcd");
+		expect(
+			renderDetached?.({}, { expanded: false }, identityTheme),
+			"Expected an entry with no data to render nothing rather than a broken line",
+		).toBeUndefined();
 	});
 });

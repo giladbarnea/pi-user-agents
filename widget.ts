@@ -49,12 +49,13 @@ export class UserAgentWidget {
 	private active = false;
 	private selectedIndex = 0;
 	private viewerOpen = false;
-	private disposeConfirmationTarget: ViewableAgent | undefined;
+	private detachConfirmationTarget: ViewableAgent | undefined;
 	private readonly completedAgents: CompletedAgent[] = [];
 
 	constructor(
 		private readonly runningAgents: Set<RunningAgent>,
 		private readonly sendJoinedResult: (message: AgentResultMessage) => void,
+		private readonly announceDetached: (sessionId: string) => void,
 	) {}
 
 	setUI(ui: UIContext): void {
@@ -63,7 +64,7 @@ export class UserAgentWidget {
 		this.ui = ui;
 		this.widgetRegistered = false;
 		this.tui = undefined;
-		this.disposeConfirmationTarget = undefined;
+		this.detachConfirmationTarget = undefined;
 		this.inputUnsub = ui.onTerminalInput((data) => this.handleKey(data));
 	}
 
@@ -74,6 +75,7 @@ export class UserAgentWidget {
 	): void {
 		this.completedAgents.push({
 			id: agent.id,
+			sessionId: agent.sessionId,
 			command: agent.command,
 			modelLabel: agent.modelLabel,
 			task: agent.task,
@@ -140,7 +142,7 @@ export class UserAgentWidget {
 		this.widgetRegistered = false;
 		this.tui = undefined;
 		this.active = false;
-		this.disposeConfirmationTarget = undefined;
+		this.detachConfirmationTarget = undefined;
 	}
 
 	private clear(): void {
@@ -155,7 +157,7 @@ export class UserAgentWidget {
 		}
 		this.active = false;
 		this.selectedIndex = 0;
-		this.disposeConfirmationTarget = undefined;
+		this.detachConfirmationTarget = undefined;
 	}
 
 	private runningAgentsForWidget(): RunningAgent[] {
@@ -199,13 +201,13 @@ export class UserAgentWidget {
 		}
 
 		if (matchesKey(data, "down")) {
-			this.disposeConfirmationTarget = undefined;
+			this.detachConfirmationTarget = undefined;
 			this.selectedIndex = Math.min(entries.length - 1, this.selectedIndex + 1);
 			this.update();
 			return { consume: true };
 		}
 		if (matchesKey(data, "up")) {
-			this.disposeConfirmationTarget = undefined;
+			this.detachConfirmationTarget = undefined;
 			if (this.selectedIndex === 0) {
 				this.deactivate();
 				return { consume: true };
@@ -225,17 +227,17 @@ export class UserAgentWidget {
 			selected?.kind === "running" &&
 			isLiveAgent(selected.agent)
 		) {
-			this.disposeConfirmationTarget = undefined;
+			this.detachConfirmationTarget = undefined;
 			this.interruptRunning(selected.agent);
 			return { consume: true };
 		}
 		if (matchesKey(data, "enter")) {
-			this.disposeConfirmationTarget = undefined;
+			this.detachConfirmationTarget = undefined;
 			if (selected) this.openSelected(selected.agent);
 			return { consume: true };
 		}
-		if (matchesKey(data, "x") && selected) {
-			if (!this.confirmDispose(selected.agent)) return { consume: true };
+		if (matchesKey(data, "d") && selected) {
+			if (!this.confirmDetach(selected.agent)) return { consume: true };
 			if (selected.kind === "running") this.closeRunning(selected.agent);
 			else this.dismissCompleted(selected.agent);
 			return { consume: true };
@@ -245,12 +247,12 @@ export class UserAgentWidget {
 		return undefined;
 	}
 
-	private confirmDispose(target: ViewableAgent): boolean {
-		if (this.disposeConfirmationTarget === target) {
-			this.disposeConfirmationTarget = undefined;
+	private confirmDetach(target: ViewableAgent): boolean {
+		if (this.detachConfirmationTarget === target) {
+			this.detachConfirmationTarget = undefined;
 			return true;
 		}
-		this.disposeConfirmationTarget = target;
+		this.detachConfirmationTarget = target;
 		this.update();
 		return false;
 	}
@@ -258,7 +260,7 @@ export class UserAgentWidget {
 	private deactivate(): void {
 		this.active = false;
 		this.selectedIndex = 0;
-		this.disposeConfirmationTarget = undefined;
+		this.detachConfirmationTarget = undefined;
 		this.update();
 	}
 
@@ -290,7 +292,7 @@ export class UserAgentWidget {
 							if (isRunningAgent(agent)) this.interruptRunning(agent);
 						},
 					),
-				{ overlay: true, overlayOptions: { anchor: "center", width: "90%", maxHeight: "70%" } },
+				{ overlay: true, overlayOptions: { anchor: "center", width: "90%", maxHeight: "85%" } },
 			)
 			.then(
 				(action) => this.onViewerClosed(agent, action),
@@ -298,10 +300,12 @@ export class UserAgentWidget {
 			);
 	}
 
+	/** Detaching ends the live session and leaves its session file on disk, untouched. */
 	private closeRunning(agent: RunningAgent): void {
 		agent.aborted = true;
 		void agent.session?.abort();
 		agent.retire?.();
+		this.announceDetached(agent.sessionId);
 		this.update();
 	}
 
@@ -368,12 +372,12 @@ export class UserAgentWidget {
 
 	private onViewerClosed(agent: ViewableAgent, action: AgentViewerAction): void {
 		this.viewerOpen = false;
-		if (action === "dispose" && isRunningAgent(agent) && this.runningAgents.has(agent)) {
+		if (action === "detach" && isRunningAgent(agent) && this.runningAgents.has(agent)) {
 			this.closeRunning(agent);
 			return;
 		}
 		const completedAgent = this.completedAgents.find((candidate) => candidate.id === agent.id);
-		if (action === "dispose" && completedAgent) this.removeCompleted(completedAgent);
+		if (action === "detach" && completedAgent) this.removeCompleted(completedAgent);
 		else this.update();
 	}
 
@@ -384,6 +388,7 @@ export class UserAgentWidget {
 	private removeCompleted(agent: CompletedAgent): void {
 		const index = this.completedAgents.indexOf(agent);
 		if (index >= 0) this.completedAgents.splice(index, 1);
+		this.announceDetached(agent.sessionId);
 		const total = this.entries().length;
 		if (total === 0) {
 			this.deactivate();
@@ -413,18 +418,18 @@ export class UserAgentWidget {
 			lines.push(truncateToWidth(`  ${theme.fg("dim", "←/↓ select agent")}`, width));
 		} else {
 			const selected = entries[this.selectedIndex];
-			const confirmingDispose = this.disposeConfirmationTarget === selected?.agent;
+			const confirmingDetach = this.detachConfirmationTarget === selected?.agent;
 			const segments = [theme.fg("accent", "↑↓ select"), theme.fg("accent", "Enter view")];
 			if (
-				!confirmingDispose &&
+				!confirmingDetach &&
 				selected?.kind === "running" &&
 				isLiveAgent(selected.agent)
 			)
 				segments.push(theme.fg("accent", "Ctrl+x interrupt"));
 			segments.push(
 				theme.fg(
-					confirmingDispose ? "error" : "accent",
-					confirmingDispose ? "x again to confirm" : "x dispose",
+					confirmingDetach ? "error" : "accent",
+					confirmingDetach ? "d again to confirm" : "d detach",
 				),
 				theme.fg("accent", "Esc back"),
 			);

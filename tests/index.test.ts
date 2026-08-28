@@ -10,6 +10,7 @@ function completedJoin(): {
 } {
 	const agent = {
 		id: "user-1",
+		sessionId: "session-1",
 		command: "agent",
 		inheritedContext: true,
 		model: "provider/model",
@@ -44,7 +45,7 @@ function completedJoin(): {
 			ok: true,
 		},
 	};
-	const widget = new UserAgentWidget(new Set(), () => undefined);
+	const widget = new UserAgentWidget(new Set(), () => undefined, () => undefined);
 	widget.addCompleted(agent, message, { joinable: false });
 	return { widget, message };
 }
@@ -87,7 +88,7 @@ describe("parent main-context confirmation", () => {
 
 	test("confirms the chat event after its widget row was removed", () => {
 		const { message } = completedJoin();
-		const emptyWidget = new UserAgentWidget(new Set(), () => undefined);
+		const emptyWidget = new UserAgentWidget(new Set(), () => undefined, () => undefined);
 
 		const result = confirmMainContextJoin(messageEnd(message), emptyWidget);
 

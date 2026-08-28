@@ -128,6 +128,7 @@ function buildHarness(
 	} as unknown as NonNullable<RunningAgent["session"]>;
 	const agent = {
 		id: "user-1",
+		sessionId: "session-1",
 		command: "agent",
 		inheritedContext: true,
 		model: "provider/model",
@@ -171,15 +172,15 @@ function buildHarness(
 				tui: TUI,
 				theme: Theme,
 				keybindings: unknown,
-				done: (result: "hide" | "dispose") => void,
+				done: (result: "hide" | "detach") => void,
 			) => Component,
 		) => {
 			viewer = factory(tui, theme, undefined, () => undefined);
-			return new Promise<"hide" | "dispose">(() => undefined);
+			return new Promise<"hide" | "detach">(() => undefined);
 		},
 	} as unknown as UIContext;
 
-	const widget = new UserAgentWidget(new Set([agent]), () => undefined);
+	const widget = new UserAgentWidget(new Set([agent]), () => undefined, () => undefined);
 	widget.setUI(ui);
 	widget.update();
 

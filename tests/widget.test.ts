@@ -51,6 +51,7 @@ function renderRunningHeader(
 	const now = Date.now();
 	const runningAgent = {
 		id: "user-1",
+		sessionId: "session-1",
 		command: "agent",
 		inheritedContext: true,
 		model: "provider/model",
@@ -75,7 +76,7 @@ function renderRunningHeader(
 					>),
 		finished: Promise.resolve(),
 	} satisfies RunningAgent;
-	const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined);
+	const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, () => undefined);
 	const theme = {
 		fg: (_color: string, text: string) => text,
 		bold: (text: string) => text,
@@ -134,8 +135,9 @@ describe("UserAgentWidget per-turn duration", () => {
 });
 
 describe("UserAgentWidget steering", () => {
-	test("Ctrl+x interrupts and x confirms disposal for a selected running agent", () => {
+	test("Ctrl+x interrupts, and d d detaches a selected running agent and announces its session", () => {
 		let abortCalls = 0;
+		const detachedSessionIds: string[] = [];
 		const session = {
 			isStreaming: true,
 			agent: { state: { messages: [] } },
@@ -146,6 +148,7 @@ describe("UserAgentWidget steering", () => {
 		} as unknown as NonNullable<RunningAgent["session"]>;
 		const runningAgent = {
 			id: "user-1",
+			sessionId: "session-1",
 			command: "agent",
 			inheritedContext: true,
 			model: "provider/model",
@@ -164,7 +167,9 @@ describe("UserAgentWidget steering", () => {
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
-		const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined);
+		const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, (sessionId) =>
+			detachedSessionIds.push(sessionId),
+		);
 		let terminalInput = (_data: string): unknown => undefined;
 		const ui = {
 			onTerminalInput: (handler: typeof terminalInput) => {
@@ -183,15 +188,19 @@ describe("UserAgentWidget steering", () => {
 		expect(abortCalls).toBe(1);
 		expect(runningAgent.aborted).toBeUndefined();
 
-		terminalInput("x");
+		terminalInput("d");
 		expect(abortCalls).toBe(1);
 		expect(runningAgent.aborted).toBeUndefined();
-		terminalInput("x");
+		terminalInput("d");
 		expect(abortCalls).toBe(2);
 		expect(runningAgent.aborted).toBe(true);
+		expect(
+			detachedSessionIds,
+			"Expected detaching to announce the child session the user can still resume",
+		).toEqual(["session-1"]);
 	});
 
-	test("Ctrl+x interrupts and x confirms disposal in the running agent overlay", () => {
+	test("Ctrl+x interrupts, and d d asks the overlay to detach a running agent", () => {
 		let abortCalls = 0;
 		const session = {
 			isStreaming: true,
@@ -203,6 +212,7 @@ describe("UserAgentWidget steering", () => {
 		} as unknown as NonNullable<RunningAgent["session"]>;
 		const runningAgent = {
 			id: "user-1",
+			sessionId: "session-1",
 			command: "agent",
 			inheritedContext: true,
 			model: "provider/model",
@@ -221,7 +231,7 @@ describe("UserAgentWidget steering", () => {
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
-		const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined);
+		const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, () => undefined);
 		const theme = {
 			fg: (_color: string, text: string) => text,
 			bold: (text: string) => text,
@@ -235,7 +245,7 @@ describe("UserAgentWidget steering", () => {
 		} as unknown as TUI;
 		let terminalInput = (_data: string): unknown => undefined;
 		let viewer: Component | undefined;
-		let viewerAction: "hide" | "dispose" | undefined;
+		let viewerAction: "hide" | "detach" | undefined;
 		const ui = {
 			onTerminalInput: (handler: typeof terminalInput) => {
 				terminalInput = handler;
@@ -248,13 +258,13 @@ describe("UserAgentWidget steering", () => {
 					tui: TUI,
 					theme: Theme,
 					keybindings: unknown,
-					done: (result: "hide" | "dispose") => void,
+					done: (result: "hide" | "detach") => void,
 				) => Component,
 			) => {
 				viewer = factory(tui, theme, undefined, (action) => {
 					viewerAction = action;
 				});
-				return new Promise<"hide" | "dispose">(() => undefined);
+				return new Promise<"hide" | "detach">(() => undefined);
 			},
 		} as unknown as UIContext;
 
@@ -265,16 +275,16 @@ describe("UserAgentWidget steering", () => {
 		if (!viewer) throw new Error("Agent viewer did not open");
 
 		expect(viewer.render(100).join("\n")).toContain("Ctrl+x interrupt");
-		expect(viewer.render(100).join("\n")).toContain("x dispose");
+		expect(viewer.render(100).join("\n")).toContain("d detach");
 		viewer.handleInput?.("\x18");
 
 		expect(abortCalls).toBe(1);
 		expect(runningAgent.aborted).toBeUndefined();
-		viewer.handleInput?.("x");
+		viewer.handleInput?.("d");
 		expect(viewerAction).toBeUndefined();
-		expect(viewer.render(100).join("\n")).toContain("x again to confirm");
-		viewer.handleInput?.("x");
-		expect(viewerAction).toBe("dispose");
+		expect(viewer.render(100).join("\n")).toContain("d again to confirm");
+		viewer.handleInput?.("d");
+		expect(viewerAction).toBe("detach");
 	});
 
 	test("resumes following the transcript tail when steering is committed", () => {
@@ -294,6 +304,7 @@ describe("UserAgentWidget steering", () => {
 		} as unknown as NonNullable<RunningAgent["session"]>;
 		const runningAgent = {
 			id: "user-1",
+			sessionId: "session-1",
 			command: "agent",
 			inheritedContext: true,
 			model: "provider/model",
@@ -313,8 +324,10 @@ describe("UserAgentWidget steering", () => {
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
 		const joinedResults: AgentResultMessage[] = [];
-		const widget = new UserAgentWidget(new Set([runningAgent]), (message) =>
-			joinedResults.push(message),
+		const widget = new UserAgentWidget(
+			new Set([runningAgent]),
+			(message) => joinedResults.push(message),
+			() => undefined,
 		);
 		const theme = {
 			fg: (_color: string, text: string) => text,
@@ -375,9 +388,10 @@ describe("UserAgentWidget steering", () => {
 });
 
 describe("UserAgentWidget completed overlay", () => {
-	test("keeps the agent on Esc and disposes it on x", async () => {
+	test("keeps the agent on Esc and detaches it on d d, announcing its session", async () => {
 		const completedAgent = {
 			id: "user-1",
+			sessionId: "session-1",
 			command: "agent",
 			inheritedContext: false,
 			model: "provider/model",
@@ -411,7 +425,12 @@ describe("UserAgentWidget completed overlay", () => {
 			},
 		};
 		const joinedResults: AgentResultMessage[] = [];
-		const widget = new UserAgentWidget(new Set(), (message) => joinedResults.push(message));
+		const detachedSessionIds: string[] = [];
+		const widget = new UserAgentWidget(
+			new Set(),
+			(message) => joinedResults.push(message),
+			(sessionId) => detachedSessionIds.push(sessionId),
+		);
 		widget.addCompleted(completedAgent, resultMessage, { joinable: true });
 		const theme = {
 			fg: (_color: string, text: string) => text,
@@ -441,10 +460,10 @@ describe("UserAgentWidget completed overlay", () => {
 					tui: TUI,
 					theme: Theme,
 					keybindings: unknown,
-					done: (result: "hide" | "dispose") => void,
+					done: (result: "hide" | "detach") => void,
 				) => Component,
 			) => {
-				return new Promise<"hide" | "dispose">((resolve) => {
+				return new Promise<"hide" | "detach">((resolve) => {
 					viewer = factory(tui, theme, undefined, resolve);
 				});
 			},
@@ -456,7 +475,7 @@ describe("UserAgentWidget completed overlay", () => {
 		terminalInput("\r");
 		if (!viewer || !widgetComponent) throw new Error("Completed agent viewer did not open");
 
-		expect(viewer.render(100).join("\n")).toContain("x dispose");
+		expect(viewer.render(100).join("\n")).toContain("d detach");
 		expect(viewer.render(100).join("\n")).toContain("j join");
 		viewer.handleInput?.("j");
 		expect(joinedResults).toEqual([resultMessage]);
@@ -467,12 +486,17 @@ describe("UserAgentWidget completed overlay", () => {
 
 		terminalInput("\r");
 		if (!viewer) throw new Error("Completed agent viewer did not reopen");
-		viewer.handleInput?.("x");
-		expect(viewer.render(100).join("\n")).toContain("x again to confirm");
+		viewer.handleInput?.("d");
+		expect(viewer.render(100).join("\n")).toContain("d again to confirm");
 		expect(widgetComponent.render(100).join("\n")).toContain("/agent");
-		viewer.handleInput?.("x");
+		expect(detachedSessionIds, "Expected no announcement before the second d").toEqual([]);
+		viewer.handleInput?.("d");
 		await Promise.resolve();
 		expect(widgetComponent.render(100)).toEqual([]);
+		expect(
+			detachedSessionIds,
+			"Expected detaching a completed agent to announce its session, which stays on disk",
+		).toEqual(["session-1"]);
 	});
 });
 
@@ -484,6 +508,7 @@ type IdleHarness = {
 	openViewer: () => void;
 	sendWidgetKey: (data: string) => void;
 	joinedResults: AgentResultMessage[];
+	detachedSessionIds: string[];
 	steeredMessages: string[];
 	resumedInstructions: string[];
 	retireCalls: () => number;
@@ -528,6 +553,7 @@ function buildIdleHarness(contextUsage: ContextUsage = undefined): IdleHarness {
 	};
 	const agent = {
 		id: "user-1",
+		sessionId: "session-1",
 		command: "agent",
 		inheritedContext: true,
 		model: "provider/model",
@@ -556,7 +582,12 @@ function buildIdleHarness(contextUsage: ContextUsage = undefined): IdleHarness {
 		finished: Promise.resolve(),
 	} satisfies RunningAgent;
 	const joinedResults: AgentResultMessage[] = [];
-	const widget = new UserAgentWidget(new Set([agent]), (message) => joinedResults.push(message));
+	const detachedSessionIds: string[] = [];
+	const widget = new UserAgentWidget(
+		new Set([agent]),
+		(message) => joinedResults.push(message),
+		(sessionId) => detachedSessionIds.push(sessionId),
+	);
 	const foregroundCalls: Array<{ color: string; text: string }> = [];
 	const theme = {
 		fg: (color: string, text: string) => {
@@ -590,10 +621,10 @@ function buildIdleHarness(contextUsage: ContextUsage = undefined): IdleHarness {
 				tui: TUI,
 				theme: Theme,
 				keybindings: unknown,
-				done: (result: "hide" | "dispose") => void,
+				done: (result: "hide" | "detach") => void,
 			) => Component,
 		) => {
-			viewerDone = new Promise<"hide" | "dispose">((resolve) => {
+			viewerDone = new Promise<"hide" | "detach">((resolve) => {
 				viewer = factory(tui, theme, undefined, resolve);
 			});
 			return viewerDone;
@@ -621,6 +652,7 @@ function buildIdleHarness(contextUsage: ContextUsage = undefined): IdleHarness {
 			terminalInput(data);
 		},
 		joinedResults,
+		detachedSessionIds,
 		steeredMessages,
 		resumedInstructions,
 		retireCalls: () => retired,
@@ -645,7 +677,7 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		expect(lines.join("\n")).toContain("fine how are you?");
 	});
 
-	test("overlay shows the idle status distinct from a disposed completed snapshot, and the current turn's duration", () => {
+	test("overlay shows the idle status distinct from a detached completed snapshot, and the current turn's duration", () => {
 		const harness = buildIdleHarness();
 		harness.openViewer();
 		const rendered = harness.viewer().render(100).join("\n");
@@ -672,6 +704,15 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 			widgetHeader.indexOf("hello how are you?"),
 		);
 		expect(overlayHeader).toContain(`model · ${meter} · idle`);
+	});
+
+	test("shows the agent's own session id in the overlay header, for /resume after detaching", () => {
+		const harness = buildIdleHarness();
+		harness.openViewer();
+		const overlayHeader =
+			harness.viewer().render(100).find((line) => line.includes("/agent")) ?? "";
+
+		expect(overlayHeader).toContain(harness.agent.sessionId);
 	});
 
 	test("Enter in the overlay steers an idle agent by resuming a new turn, not by queueing into the session", () => {
@@ -716,41 +757,43 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		expect(snapshotRow).not.toContain("1m");
 	});
 
-	test("x in the overlay retires an idle agent instead of leaving it parked", async () => {
+	test("d d in the overlay retires an idle agent instead of leaving it parked", async () => {
 		const harness = buildIdleHarness();
 		harness.openViewer();
 		const viewer = harness.viewer();
 
-		expect(viewer.render(100).join("\n")).toContain("x dispose");
-		viewer.handleInput?.("x");
-		expect(viewer.render(100).join("\n")).toContain("x again to confirm");
+		expect(viewer.render(100).join("\n")).toContain("d detach");
+		viewer.handleInput?.("d");
+		expect(viewer.render(100).join("\n")).toContain("d again to confirm");
 		expect(harness.foregroundCalls).toContainEqual({
 			color: "error",
-			text: "x again to confirm",
+			text: "d again to confirm",
 		});
 		expect(harness.agent.aborted).toBeUndefined();
-		viewer.handleInput?.("x");
+		viewer.handleInput?.("d");
 		await harness.settleViewer();
 
 		expect(harness.agent.aborted).toBe(true);
 		expect(harness.retireCalls()).toBe(1);
+		expect(harness.detachedSessionIds).toEqual(["session-1"]);
 	});
 
-	test("x at the widget level retires an idle agent", () => {
+	test("d d at the widget level retires an idle agent", () => {
 		const harness = buildIdleHarness();
 		expect(harness.widgetComponent().render(120).join("\n")).toContain("/agent");
 
 		harness.sendWidgetKey("\x1b[B");
-		harness.sendWidgetKey("x");
-		expect(harness.widgetComponent().render(120).join("\n")).toContain("x again to confirm");
+		harness.sendWidgetKey("d");
+		expect(harness.widgetComponent().render(120).join("\n")).toContain("d again to confirm");
 		expect(harness.foregroundCalls).toContainEqual({
 			color: "error",
-			text: "x again to confirm",
+			text: "d again to confirm",
 		});
 		expect(harness.agent.aborted).toBeUndefined();
-		harness.sendWidgetKey("x");
+		harness.sendWidgetKey("d");
 
 		expect(harness.agent.aborted).toBe(true);
 		expect(harness.retireCalls()).toBe(1);
+		expect(harness.detachedSessionIds).toEqual(["session-1"]);
 	});
 });

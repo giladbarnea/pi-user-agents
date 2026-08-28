@@ -4,15 +4,22 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { registerAgentAutocomplete } from "./autocomplete.js";
 import { handleAgentCommand } from "./runner.js";
-import type { AgentCommandDetails, ExtensionAPI, RunningAgent } from "./shared.js";
-import { MESSAGE_TYPE } from "./shared.js";
+import type {
+	AgentCommandDetails,
+	DetachedEntryData,
+	ExtensionAPI,
+	RunningAgent,
+} from "./shared.js";
+import { DETACHED_ENTRY_TYPE, MESSAGE_TYPE } from "./shared.js";
 import { registerUserAgentRenderer } from "./transcript.js";
 import { UserAgentWidget } from "./widget.js";
 
 export default function userAgent(pi: ExtensionAPI): void {
 	const runningAgents = new Set<RunningAgent>();
-	const widget = new UserAgentWidget(runningAgents, (message) =>
-		pi.sendMessage(message, { triggerTurn: true }),
+	const widget = new UserAgentWidget(
+		runningAgents,
+		(message) => pi.sendMessage(message, { triggerTurn: true }),
+		(sessionId) => pi.appendEntry<DetachedEntryData>(DETACHED_ENTRY_TYPE, { sessionId }),
 	);
 	let shuttingDown = false;
 	let nextAgentNumber = 0;

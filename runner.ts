@@ -96,7 +96,18 @@ async function startUserAgent(
 		services.modelRuntime.getModel(selectedModel.provider, selectedModel.id) ?? selectedModel;
 	const thinkingLevel = forwarded.thinkingLevel ?? pi.getThinkingLevel();
 	const inheritedMessages = parsed.isolate ? [] : buildInheritedMessages(ctx);
-	const runningAgent = createRunningAgent(nextAgentNumber(), command, model, parsed, invocation);
+	// A real session file from birth: the child outlives the widget row and stays resumable.
+	const childSessionManager = SessionManager.create(services.cwd, undefined, {
+		parentSession: ctx.sessionManager.getSessionFile(),
+	});
+	const runningAgent = createRunningAgent(
+		nextAgentNumber(),
+		childSessionManager.getSessionId(),
+		command,
+		model,
+		parsed,
+		invocation,
+	);
 
 	runningAgents.add(runningAgent);
 	logSteering(runningAgent.id, "agent-created", { command, taskLength: parsed.task.length });
@@ -117,6 +128,7 @@ async function startUserAgent(
 		forwarded,
 		inheritedMessages,
 		services,
+		childSessionManager,
 		runningAgent,
 		widget,
 	).finally(() => {
@@ -129,6 +141,7 @@ async function startUserAgent(
 
 function createRunningAgent(
 	sequenceNumber: number,
+	sessionId: string,
 	command: AgentCommandName,
 	model: Model,
 	parsed: ParsedAgentCommand,
@@ -136,6 +149,7 @@ function createRunningAgent(
 ): RunningAgent {
 	return {
 		id: `user-${sequenceNumber.toString(36)}`,
+		sessionId,
 		command,
 		inheritedContext: !parsed.isolate,
 		model: formatModel(model),
@@ -342,6 +356,7 @@ async function runAgentLifecycle(
 	forwarded: ForwardedOptions,
 	inheritedMessages: AgentMessage[],
 	services: AgentSessionServices,
+	childSessionManager: SessionManager,
 	runningAgent: RunningAgent,
 	widget: UserAgentWidget,
 ): Promise<void> {
@@ -354,6 +369,7 @@ async function runAgentLifecycle(
 			forwarded,
 			inheritedMessages,
 			services,
+			childSessionManager,
 			runningAgent,
 			widget,
 		);
@@ -487,12 +503,15 @@ async function createChildSession(
 	forwarded: ForwardedOptions,
 	inheritedMessages: AgentMessage[],
 	services: AgentSessionServices,
+	childSessionManager: SessionManager,
 	runningAgent: RunningAgent,
 	widget: UserAgentWidget,
 ): Promise<AgentSession> {
+	// Built while the session is still empty: that is the only path on which pi records the
+	// model and thinking level, and without those entries a resumed child falls back to defaults.
 	const { session } = await createAgentSessionFromServices({
 		services,
-		sessionManager: SessionManager.inMemory(services.cwd),
+		sessionManager: childSessionManager,
 		model,
 		thinkingLevel,
 		tools: forwarded.tools,
@@ -509,10 +528,36 @@ async function createChildSession(
 	await session.bindExtensions({ mode: "print" });
 	logSteering(runningAgent.id, "session-bound", { streaming: session.isStreaming });
 	if (inheritedMessages.length > 0) {
+		persistInheritedMessages(childSessionManager, inheritedMessages);
 		session.agent.state.messages = inheritedMessages;
 		logSteering(runningAgent.id, "context-inherited", { messageCount: inheritedMessages.length });
 	}
 	return session;
+}
+
+/**
+ * Mirror the inherited snapshot into the child's session file so a resumed child sees the
+ * same conversation the live one saw. Each role goes through its own append method: the
+ * snapshot is already compaction-resolved, so its summary leads the child's own branch.
+ */
+export function persistInheritedMessages(
+	sessionManager: SessionManager,
+	messages: readonly AgentMessage[],
+): void {
+	for (const message of messages) {
+		if (message.role === "compactionSummary")
+			sessionManager.appendCompaction(message.summary, "", message.tokensBefore);
+		else if (message.role === "branchSummary")
+			sessionManager.branchWithSummary(sessionManager.getLeafId(), message.summary);
+		else if (message.role === "custom")
+			sessionManager.appendCustomMessageEntry(
+				message.customType,
+				message.content,
+				message.display,
+				message.details,
+			);
+		else sessionManager.appendMessage(message);
+	}
 }
 
 /** Parks an idle agent until the user resumes it with another instruction (resolves with it) or retires it (resolves undefined). */

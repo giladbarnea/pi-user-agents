@@ -30,6 +30,23 @@ A plain `<user_agent>` tag follows it. The tag contains only the model and inher
 
 One selection rule builds the body. It keeps every user message. Before each next user message, it keeps only the latest assistant response. It applies the same rule after the final user message. Tool calls, thinking, tool results, and other message roles stay out.
 
+## Child session persistence
+
+Every dispatched agent gets a persisted `SessionManager.create(cwd, undefined, { parentSession })` rather than an in-memory one, so its conversation is an ordinary Pi session file from birth. `parentSession` is a *path*, and it records the main session that dispatched the agent — the same field `/fork` uses, surfaced by `SessionManager.list()` as `parentSessionPath`. There is no API to promote an in-memory session to disk later: `SessionManager` fixes `persist` at construction, and both `_persist()` and `_rewriteFile()` return early when it is false, so `setSessionFile()` on an in-memory manager sets a path and writes nothing.
+
+Two ordering constraints follow from `createAgentSession`:
+
+1. **Build the session while its manager is still empty.** Pi writes the `model_change` and `thinking_level_change` entries only on the empty-session path. Seed messages first and those entries never appear, so a resumed child falls back to `findInitialModel` instead of the model it was dispatched with.
+2. **Route the inherited snapshot through the session manager.** Persistence runs off message events, so the old `session.agent.state.messages = inherited` assignment never reached the file. `persistInheritedMessages` appends it entry by entry, then the agent state is set to the same list.
+
+That snapshot is already compaction-resolved, so at most one `compactionSummary` leads it. Each role takes its own append method — `appendCompaction`, `branchWithSummary`, `appendCustomMessageEntry`, `appendMessage` — because pi's own compaction and branch bookkeeping locates boundaries by entry type, and a summary written as a plain message entry would be invisible to it. `appendCompaction` wants a `firstKeptEntryId` the replay cannot know, but `buildContextEntries` only consults it for entries *before* the compaction entry; a leading compaction has none, so the value is never read.
+
+The file itself appears on the child's first assistant message (`_persist` defers until then). An agent dispatched with `-i` that never answers therefore leaves nothing behind, while an agent that inherited context has a file immediately.
+
+## Detaching
+
+`d` `d` ends the live child session and drops its widget row. The session file is untouched, and the transcript gets a `pi-user-agents-detached` custom entry naming the session id so it can be resumed later. Both detach paths funnel through `closeRunning` and `removeCompleted`, which is where the announcement is made; joining and session shutdown deliberately do not announce.
+
 ## Runtime sharing
 
 Child agent sessions share the parent's `ModelRuntime` instance. This is critical because extension-registered providers (like `claude-bridge`) use a global `Symbol.for` dedup guard — they register once per process and skip subsequent loads. A child session with its own fresh runtime would never receive the provider, leaving it without auth for bridge-backed models.
