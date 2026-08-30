@@ -15,9 +15,11 @@ import {
 	type ViewableAgent,
 } from "./agent-viewer.js";
 import { renderAgentContextMeter } from "./context-meter.js";
+import { selectRebaseMessages } from "./rebase.js";
 import type {
 	AgentResultMessage,
 	CompletedAgent,
+	RebaseDelivery,
 	RunningAgent,
 	Theme,
 	UIContext,
@@ -56,6 +58,7 @@ export class UserAgentWidget {
 		private readonly runningAgents: Set<RunningAgent>,
 		private readonly sendJoinedResult: (message: AgentResultMessage) => void,
 		private readonly announceDetached: (sessionId: string) => void,
+		private readonly rebaseDelivery: RebaseDelivery,
 	) {}
 
 	setUI(ui: UIContext): void {
@@ -79,6 +82,7 @@ export class UserAgentWidget {
 			command: agent.command,
 			modelLabel: agent.modelLabel,
 			task: agent.task,
+			dispatchBaseFingerprint: agent.dispatchBaseFingerprint,
 			mainContextState: agent.mainContextState,
 			pendingJoinMessage: options.joinable ? resultMessage : undefined,
 			ok: resultMessage.details.ok,
@@ -288,6 +292,8 @@ export class UserAgentWidget {
 						done,
 						() => this.canJoinMainContext(agent.id),
 						() => this.joinMainContext(agent.id),
+						() => this.canRebaseMainContext(agent.id),
+						() => this.rebaseMainContext(agent.id),
 						() => {
 							if (isRunningAgent(agent)) this.interruptRunning(agent);
 						},
@@ -320,10 +326,7 @@ export class UserAgentWidget {
 	}
 
 	private canJoinMainContext(agentId: string): boolean {
-		if (this.idleAgent(agentId)?.pendingJoinMessage) return true;
-		return this.completedAgents.some(
-			(agent) => agent.id === agentId && agent.pendingJoinMessage !== undefined,
-		);
+		return this.deliverableAgent(agentId) !== undefined;
 	}
 
 	confirmMainContextJoin(agentId: string): boolean {
@@ -352,6 +355,46 @@ export class UserAgentWidget {
 		message.details.mainContextState = "will-join";
 		this.sendJoinedResult(message);
 		logSteering(agentId, "joined-main-context", { display: message.display });
+		this.update();
+	}
+
+	/** An agent whose latest turn result is still deliverable: idle live, or completed and joinable. */
+	private deliverableAgent(agentId: string): RunningAgent | CompletedAgent | undefined {
+		const idleAgent = this.idleAgent(agentId);
+		if (idleAgent?.pendingJoinMessage) return idleAgent;
+		return this.completedAgents.find(
+			(agent) => agent.id === agentId && agent.pendingJoinMessage !== undefined,
+		);
+	}
+
+	private canRebaseMainContext(agentId: string): boolean {
+		// The rebase reload tears the extension runtime down, which would abort a mid-turn sibling.
+		if ([...this.runningAgents].some(isLiveAgent)) return false;
+		const agent = this.deliverableAgent(agentId);
+		return agent !== undefined && this.rebaseDelivery.canDeliver(agent);
+	}
+
+	/** Fast-forward the raw child conversation onto the main session, then retire the agent. */
+	private rebaseMainContext(agentId: string): void {
+		if (!this.canRebaseMainContext(agentId)) return;
+		const agent = this.deliverableAgent(agentId);
+		if (!agent) return;
+		// The reload will not preserve live rows; give every sibling its resumable-session breadcrumb.
+		for (const other of [...this.runningAgents]) if (other !== agent) this.closeRunning(other);
+		for (const other of [...this.completedAgents]) if (other !== agent) this.removeCompleted(other);
+		const message = agent.pendingJoinMessage;
+		this.rebaseDelivery.deliver(
+			agent,
+			selectRebaseMessages(agent.task, structuredClone(transcriptMessages(agent))),
+		);
+		agent.pendingJoinMessage = undefined;
+		agent.mainContextState = "rebased";
+		if (isRunningAgent(agent)) {
+			agent.status = "posted";
+			if (message) this.addCompleted(agent, message, { joinable: false });
+			agent.retire?.();
+		}
+		logSteering(agentId, "rebased-main-context");
 		this.update();
 	}
 

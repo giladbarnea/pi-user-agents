@@ -161,6 +161,8 @@ export class AgentViewer implements Component {
 		private readonly done: (result: AgentViewerAction) => void,
 		private readonly canJoinMainContext: () => boolean,
 		private readonly joinMainContext: () => void,
+		private readonly canRebaseMainContext: () => boolean,
+		private readonly rebaseMainContext: () => void,
 		private readonly interrupt: () => void,
 	) {}
 
@@ -197,6 +199,12 @@ export class AgentViewer implements Component {
 		if (matchesKey(data, "j") && this.canJoinMainContext()) {
 			this.joinMainContext();
 			this.tui.requestRender();
+			return;
+		}
+		if (matchesKey(data, "r") && this.canRebaseMainContext()) {
+			// Close the overlay: the payoff is the rebased conversation now sitting in the main transcript.
+			this.rebaseMainContext();
+			this.done("hide");
 			return;
 		}
 		const viewport = this.viewportHeight();
@@ -307,6 +315,7 @@ export class AgentViewer implements Component {
 					th.fg("dim", "↑↓ scroll"),
 					th.fg("dim", "PgUp/PgDn"),
 					this.canJoinMainContext() ? th.fg("dim", "j join") : "",
+					this.canRebaseMainContext() ? th.fg("dim", "r rebase") : "",
 					isLiveAgent(this.agent) ? th.fg("dim", "Ctrl+x interrupt") : "",
 					mainContext ? th.fg("dim", mainContext) : "",
 					isLiveAgent(this.agent) ? th.fg("dim", "Esc hide") : "",

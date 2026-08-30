@@ -9,6 +9,7 @@ import type {
 	DetachedEntryData,
 	ExtensionAPI,
 	ExtensionCommandContext,
+	RebasedEntryData,
 	RunningAgent,
 	Theme,
 } from "./shared.js";
@@ -22,6 +23,7 @@ import {
 	formatTurns,
 	mainContextLabel,
 	MESSAGE_TYPE,
+	REBASED_ENTRY_TYPE,
 	truncatePlain,
 } from "./shared.js";
 
@@ -217,6 +219,15 @@ export function registerUserAgentRenderer(pi: ExtensionAPI): void {
 	pi.registerEntryRenderer<DetachedEntryData>(DETACHED_ENTRY_TYPE, (entry, _state, theme) =>
 		entry.data
 			? new Text(theme.fg("dim", `Detached session ${entry.data.sessionId}`), 0, 0)
+			: undefined,
+	);
+	pi.registerEntryRenderer<RebasedEntryData>(REBASED_ENTRY_TYPE, (entry, _state, theme) =>
+		entry.data
+			? new Text(
+					theme.fg("dim", `Rebased session ${entry.data.sessionId} into this conversation`),
+					0,
+					0,
+				)
 			: undefined,
 	);
 }

@@ -4,11 +4,20 @@ import { contextMeterColor, renderContextMeter } from "../context-meter.ts";
 import type {
 	AgentMessage,
 	AgentResultMessage,
+	RebaseDelivery,
 	RunningAgent,
 	Theme,
 	UIContext,
 } from "../shared.js";
 import { UserAgentWidget } from "../widget.ts";
+
+/** A widget under test that must never rebase. */
+const noRebase: RebaseDelivery = {
+	canDeliver: () => false,
+	deliver: () => {
+		throw new Error("Unexpected rebase delivery");
+	},
+};
 
 const meterTheme = {
 	fg: (_color: string, text: string) => text,
@@ -59,6 +68,7 @@ function renderRunningHeader(
 		task: "plan the migration",
 		invocation: "/agent plan the migration",
 		notifyMainAgent: false,
+		dispatchBaseFingerprint: "[]",
 		mainContextState: overrides.mainContextState ?? "separate",
 		status: "running",
 		startedAt: overrides.startedAt ?? now,
@@ -76,7 +86,7 @@ function renderRunningHeader(
 					>),
 		finished: Promise.resolve(),
 	} satisfies RunningAgent;
-	const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, () => undefined);
+	const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, () => undefined, noRebase);
 	const theme = {
 		fg: (_color: string, text: string) => text,
 		bold: (text: string) => text,
@@ -156,6 +166,7 @@ describe("UserAgentWidget steering", () => {
 			task: "plan the migration",
 			invocation: "/agent plan the migration",
 			notifyMainAgent: false,
+			dispatchBaseFingerprint: "[]",
 			status: "running",
 			startedAt: Date.now(),
 			turnStartedAt: Date.now(),
@@ -167,8 +178,11 @@ describe("UserAgentWidget steering", () => {
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
-		const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, (sessionId) =>
-			detachedSessionIds.push(sessionId),
+		const widget = new UserAgentWidget(
+			new Set([runningAgent]),
+			() => undefined,
+			(sessionId) => detachedSessionIds.push(sessionId),
+			noRebase,
 		);
 		let terminalInput = (_data: string): unknown => undefined;
 		const ui = {
@@ -220,6 +234,7 @@ describe("UserAgentWidget steering", () => {
 			task: "plan the migration",
 			invocation: "/agent plan the migration",
 			notifyMainAgent: false,
+			dispatchBaseFingerprint: "[]",
 			status: "running",
 			startedAt: Date.now(),
 			turnStartedAt: Date.now(),
@@ -231,7 +246,7 @@ describe("UserAgentWidget steering", () => {
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
-		const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, () => undefined);
+		const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, () => undefined, noRebase);
 		const theme = {
 			fg: (_color: string, text: string) => text,
 			bold: (text: string) => text,
@@ -312,6 +327,7 @@ describe("UserAgentWidget steering", () => {
 			task: "plan the migration",
 			invocation: "/agent plan the migration",
 			notifyMainAgent: false,
+			dispatchBaseFingerprint: "[]",
 			status: "running",
 			startedAt: Date.now(),
 			turnStartedAt: Date.now(),
@@ -328,6 +344,7 @@ describe("UserAgentWidget steering", () => {
 			new Set([runningAgent]),
 			(message) => joinedResults.push(message),
 			() => undefined,
+			noRebase,
 		);
 		const theme = {
 			fg: (_color: string, text: string) => text,
@@ -399,6 +416,7 @@ describe("UserAgentWidget completed overlay", () => {
 			task: "finish the task",
 			invocation: "/agent -i finish the task",
 			notifyMainAgent: false,
+			dispatchBaseFingerprint: "[]",
 			mainContextState: "separate",
 			status: "posted",
 			startedAt: Date.now() - 1_000,
@@ -430,6 +448,7 @@ describe("UserAgentWidget completed overlay", () => {
 			new Set(),
 			(message) => joinedResults.push(message),
 			(sessionId) => detachedSessionIds.push(sessionId),
+			noRebase,
 		);
 		widget.addCompleted(completedAgent, resultMessage, { joinable: true });
 		const theme = {
@@ -516,7 +535,11 @@ type IdleHarness = {
 	settleViewer: () => Promise<void>;
 };
 
-function buildIdleHarness(contextUsage: ContextUsage = undefined): IdleHarness {
+function buildIdleHarness(
+	contextUsage: ContextUsage = undefined,
+	rebaseDelivery: RebaseDelivery = noRebase,
+	extraAgents: RunningAgent[] = [],
+): IdleHarness {
 	const messages = [
 		{ role: "user", content: [{ type: "text", text: "hello how are you?" }], timestamp: 1 },
 		{
@@ -561,6 +584,7 @@ function buildIdleHarness(contextUsage: ContextUsage = undefined): IdleHarness {
 		task: "hello how are you?",
 		invocation: "/agent hello how are you?",
 		notifyMainAgent: false,
+		dispatchBaseFingerprint: "[]",
 		mainContextState: "separate",
 		status: "idle",
 		startedAt: Date.now() - 60_000,
@@ -584,9 +608,10 @@ function buildIdleHarness(contextUsage: ContextUsage = undefined): IdleHarness {
 	const joinedResults: AgentResultMessage[] = [];
 	const detachedSessionIds: string[] = [];
 	const widget = new UserAgentWidget(
-		new Set([agent]),
+		new Set([agent, ...extraAgents]),
 		(message) => joinedResults.push(message),
 		(sessionId) => detachedSessionIds.push(sessionId),
+		rebaseDelivery,
 	);
 	const foregroundCalls: Array<{ color: string; text: string }> = [];
 	const theme = {
@@ -795,5 +820,139 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		expect(harness.agent.aborted).toBe(true);
 		expect(harness.retireCalls()).toBe(1);
 		expect(harness.detachedSessionIds).toEqual(["session-1"]);
+	});
+});
+
+describe("UserAgentWidget rebase", () => {
+	test("r rebases the child conversation onto the main session, retires it, and closes the overlay", async () => {
+		const delivered: Array<{ agentId: string; roles: string[]; firstContent: unknown }> = [];
+		const harness = buildIdleHarness(undefined, {
+			canDeliver: () => true,
+			deliver: (agent, messages) =>
+				delivered.push({
+					agentId: agent.id,
+					roles: messages.map((message) => message.role),
+					firstContent: messages[0]?.content,
+				}),
+		});
+		harness.openViewer();
+		const viewer = harness.viewer();
+
+		expect(viewer.render(100).join("\n")).toContain("r rebase");
+		viewer.handleInput?.("r");
+		await harness.settleViewer();
+
+		expect(delivered, "Expected one rebase delivery of the raw child conversation").toEqual([
+			{
+				agentId: "user-1",
+				roles: ["user", "assistant"],
+				firstContent: "hello how are you?",
+			},
+		]);
+		expect(harness.joinedResults, "Expected rebase to bypass the join channel").toEqual([]);
+		expect(harness.agent.pendingJoinMessage).toBeUndefined();
+		expect(harness.agent.status).toBe("posted");
+		expect(harness.agent.mainContextState).toBe("rebased");
+		expect(harness.retireCalls()).toBe(1);
+		expect(harness.widgetComponent().render(120).join("\n")).toContain("rebased into context");
+	});
+
+	test("r is withheld while the main session has drifted, leaving join available", () => {
+		const delivered: unknown[] = [];
+		const harness = buildIdleHarness(undefined, {
+			canDeliver: () => false,
+			deliver: (...args) => delivered.push(args),
+		});
+		harness.openViewer();
+		const viewer = harness.viewer();
+
+		expect(viewer.render(100).join("\n")).not.toContain("r rebase");
+		expect(viewer.render(100).join("\n")).toContain("j join");
+		viewer.handleInput?.("r");
+
+		expect(delivered).toEqual([]);
+		expect(harness.agent.pendingJoinMessage).toBeDefined();
+		expect(harness.agent.status).toBe("idle");
+	});
+});
+
+function secondaryAgent(
+	sequence: number,
+	status: RunningAgent["status"],
+	retirements: string[],
+): RunningAgent {
+	return {
+		id: `user-${sequence}`,
+		sessionId: `session-${sequence}`,
+		command: "agent",
+		inheritedContext: true,
+		model: "provider/model",
+		modelLabel: "model",
+		task: `secondary task ${sequence}`,
+		invocation: `/agent secondary task ${sequence}`,
+		notifyMainAgent: false,
+		dispatchBaseFingerprint: "[]",
+		mainContextState: "separate",
+		status,
+		startedAt: Date.now(),
+		turnStartedAt: Date.now(),
+		activeTools: new Map<string, string>(),
+		toolUses: 0,
+		turnCount: status === "idle" ? 1 : 0,
+		responseText: status === "idle" ? "parked response" : "",
+		conversationMessages: [],
+		retire: () => {
+			retirements.push(`user-${sequence}`);
+		},
+		finished: Promise.resolve(),
+	};
+}
+
+describe("UserAgentWidget rebase alongside other agents", () => {
+	test("r is withheld while any agent is mid-turn", () => {
+		const delivered: unknown[] = [];
+		const harness = buildIdleHarness(
+			undefined,
+			{ canDeliver: () => true, deliver: (...args) => delivered.push(args) },
+			[secondaryAgent(2, "running", [])],
+		);
+		harness.openViewer();
+		const viewer = harness.viewer();
+
+		expect(
+			viewer.render(100).join("\n"),
+			"Expected no rebase offer while a sibling agent is mid-turn: the reload would abort it",
+		).not.toContain("r rebase");
+		viewer.handleInput?.("r");
+
+		expect(delivered).toEqual([]);
+		expect(harness.agent.status).toBe("idle");
+	});
+
+	test("r detaches the other parked agents with breadcrumbs before the reload", async () => {
+		const delivered: string[] = [];
+		const retirements: string[] = [];
+		const parked = secondaryAgent(2, "idle", retirements);
+		const harness = buildIdleHarness(
+			undefined,
+			{ canDeliver: () => true, deliver: (agent) => delivered.push(agent.id) },
+			[parked],
+		);
+		harness.openViewer();
+		const viewer = harness.viewer();
+
+		viewer.handleInput?.("r");
+		await harness.settleViewer();
+
+		expect(delivered, "Expected only the target agent's conversation to be delivered").toEqual([
+			"user-1",
+		]);
+		expect(
+			harness.detachedSessionIds,
+			"Expected the parked sibling to leave a resumable-session breadcrumb",
+		).toEqual(["session-2"]);
+		expect(parked.aborted).toBe(true);
+		expect(retirements).toEqual(["user-2"]);
+		expect(harness.agent.mainContextState).toBe("rebased");
 	});
 });

@@ -7,7 +7,7 @@ import {
 	buildChildResourceLoaderOptions,
 	parseAgentCommand,
 	parseForwardedArgs,
-	persistInheritedMessages,
+	persistMessages,
 	resolveForwardedOptions,
 	runChildTurns,
 	waitForInstruction,
@@ -588,12 +588,12 @@ describe("resolveForwardedOptions — static-arity forwarding (§7)", () => {
 	});
 });
 
-describe("persistInheritedMessages — the child session file is resumable", () => {
+describe("persistMessages — the child session file is resumable", () => {
 	function roundTrip(messages: AgentMessage[]): { messages: AgentMessage[]; entryTypes: string[] } {
 		const sessionDirectory = mkdtempSync(join(tmpdir(), "pi-user-agents-"));
 		try {
 			const sessionManager = SessionManager.create("/tmp/project", sessionDirectory);
-			persistInheritedMessages(sessionManager, messages);
+			persistMessages(sessionManager, messages);
 			const sessionFile = sessionManager.getSessionFile();
 			expect(sessionFile, "Expected the child session to have a file path").toBeString();
 			const reopened = SessionManager.open(sessionFile as string);
@@ -770,6 +770,7 @@ describe("runChildTurns — main-context delivery", () => {
 			task: "plan the migration",
 			invocation: "/agent plan the migration",
 			notifyMainAgent: true,
+			dispatchBaseFingerprint: "[]",
 			mainContextState: "will-join",
 			status: "running",
 			startedAt: Date.now(),
@@ -856,6 +857,7 @@ describe("runChildTurns — main-context delivery", () => {
 			task: "plan the migration",
 			invocation: "/agent -j plan the migration",
 			notifyMainAgent: true,
+			dispatchBaseFingerprint: "[]",
 			mainContextState: "will-join",
 			status: "running",
 			startedAt: Date.now(),

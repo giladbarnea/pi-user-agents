@@ -1,8 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { MessageEndEvent } from "@earendil-works/pi-coding-agent";
 import { confirmMainContextJoin } from "../index.ts";
-import type { AgentResultMessage, RunningAgent } from "../shared.js";
+import type { AgentResultMessage, RebaseDelivery, RunningAgent } from "../shared.js";
 import { UserAgentWidget } from "../widget.ts";
+
+/** A widget under test that must never rebase. */
+const noRebase: RebaseDelivery = {
+	canDeliver: () => false,
+	deliver: () => {
+		throw new Error("Unexpected rebase delivery");
+	},
+};
 
 function completedJoin(): {
 	widget: UserAgentWidget;
@@ -18,6 +26,7 @@ function completedJoin(): {
 		task: "review the migration",
 		invocation: "/agent -j review the migration",
 		notifyMainAgent: true,
+		dispatchBaseFingerprint: "[]",
 		mainContextState: "will-join",
 		status: "posted",
 		startedAt: 1_000,
@@ -45,7 +54,7 @@ function completedJoin(): {
 			ok: true,
 		},
 	};
-	const widget = new UserAgentWidget(new Set(), () => undefined, () => undefined);
+	const widget = new UserAgentWidget(new Set(), () => undefined, () => undefined, noRebase);
 	widget.addCompleted(agent, message, { joinable: false });
 	return { widget, message };
 }
@@ -88,7 +97,7 @@ describe("parent main-context confirmation", () => {
 
 	test("confirms the chat event after its widget row was removed", () => {
 		const { message } = completedJoin();
-		const emptyWidget = new UserAgentWidget(new Set(), () => undefined, () => undefined);
+		const emptyWidget = new UserAgentWidget(new Set(), () => undefined, () => undefined, noRebase);
 
 		const result = confirmMainContextJoin(messageEnd(message), emptyWidget);
 

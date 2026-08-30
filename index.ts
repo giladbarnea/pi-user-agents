@@ -3,11 +3,12 @@ import type {
 	MessageEndEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { registerAgentAutocomplete } from "./autocomplete.js";
-import { handleAgentCommand } from "./runner.js";
+import { createRebaseDelivery, handleAgentCommand } from "./runner.js";
 import type {
 	AgentCommandDetails,
 	DetachedEntryData,
 	ExtensionAPI,
+	ExtensionCommandContext,
 	RunningAgent,
 } from "./shared.js";
 import { DETACHED_ENTRY_TYPE, MESSAGE_TYPE } from "./shared.js";
@@ -16,10 +17,13 @@ import { UserAgentWidget } from "./widget.js";
 
 export default function userAgent(pi: ExtensionAPI): void {
 	const runningAgents = new Set<RunningAgent>();
+	// The session every agent was dispatched from; rebase fast-forwards onto it.
+	let mainSessionContext: ExtensionCommandContext | undefined;
 	const widget = new UserAgentWidget(
 		runningAgents,
 		(message) => pi.sendMessage(message, { triggerTurn: true }),
 		(sessionId) => pi.appendEntry<DetachedEntryData>(DETACHED_ENTRY_TYPE, { sessionId }),
+		createRebaseDelivery(pi, () => mainSessionContext),
 	);
 	let shuttingDown = false;
 	let nextAgentNumber = 0;
@@ -33,6 +37,7 @@ export default function userAgent(pi: ExtensionAPI): void {
 		description:
 			"Run a background SDK agent with current session context; forwards pi CLI options like --thinking (-i/--isolate for none)",
 		handler: async (args, ctx) => {
+			mainSessionContext = ctx;
 			await handleAgentCommand(
 				pi,
 				runningAgents,

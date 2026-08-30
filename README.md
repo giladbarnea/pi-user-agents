@@ -89,6 +89,16 @@ When a result does belong in the main conversation, join it:
 
 Joining delivers a compact record, not a transcript dump: every message you sent the agent and the final answer to each — no thinking, no tool traffic. The record is rebuilt from the agent's full history at join time, so early turns survive even after the agent compacts its own context. If the main agent is mid-turn, the record is steered in; if idle, it triggers a turn. A joined agent retires; its overlay stays readable.
 
+### 6. Or rebase — rewrite history
+
+Join has a raw sibling. Press `r` in the overlay and the agent's whole conversation — prompts, replies, tool calls and their results — is appended to the main session as ordinary messages, exactly as if you had prompted the main agent all along. The dispatch preamble is stripped, nothing is wrapped or summarized, and no trace remains that a background agent ever existed. The transcript reloads with the conversation inline, followed by one dim provenance line:
+
+```
+Rebased session 01a0534e-9fa7-7d6f-bd44-b85fba1f5e05 into this conversation
+```
+
+Rebase is a fast-forward, in the git sense: the child forked from the main conversation's tip, and its history can graft back only while that tip hasn't moved. Send the main agent anything after the dispatch and `r` disappears, leaving `j` — which always works — as the way in. Delivering the rebase reloads the session, so `r` is also withheld while any agent is mid-turn, and parked agents are detached first, each leaving its `Detached session …` line to `/resume` from.
+
 ## Per-agent configuration
 
 Each dispatch takes its own configuration, using the same flags as the `pi` CLI:
@@ -127,6 +137,7 @@ Everything goes through one command: `/agent [options] <task>`.
 | Widget / overlay | `Esc` | Back |
 | Overlay | `Enter` | Steer mid-turn, or start another turn when idle |
 | Overlay | `j` | Join the conversation into the main context |
+| Overlay | `r` | Rebase the raw conversation into the main context (fast-forward only) |
 | Overlay | `c` | Copy the latest response |
 | Overlay | scroll · `End` | Pause tail-following · resume it |
 

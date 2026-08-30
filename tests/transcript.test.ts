@@ -10,7 +10,7 @@ import type {
 	RunningAgent,
 	Theme,
 } from "../shared.js";
-import { DETACHED_ENTRY_TYPE, MESSAGE_TYPE } from "../shared.js";
+import { DETACHED_ENTRY_TYPE, MESSAGE_TYPE, REBASED_ENTRY_TYPE } from "../shared.js";
 import {
 	buildAgentResultMessage,
 	formatStartNotification,
@@ -29,6 +29,7 @@ function completedAgent(): RunningAgent {
 		task: "review the migration",
 		invocation: "/agent review the migration",
 		notifyMainAgent: false,
+		dispatchBaseFingerprint: "[]",
 		mainContextState: "separate",
 		status: "posted",
 		startedAt: 1_000,
@@ -380,6 +381,42 @@ describe("completed agent transcript card", () => {
 			?.render(120)
 			.join("\n");
 		expect(legacyOutput).toContain("A full response from an older persisted entry.");
+	});
+});
+
+describe("rebased session entry", () => {
+	test("names the child session whose conversation was fast-forwarded into this one", () => {
+		initTheme(undefined, false);
+		type RenderedComponent = { render(width: number): string[] } | undefined;
+		let renderRebased:
+			| ((
+					entry: { data?: { sessionId: string } },
+					options: { expanded: boolean },
+					theme: Theme,
+			  ) => RenderedComponent)
+			| undefined;
+		const pi = {
+			registerMessageRenderer: () => undefined,
+			registerEntryRenderer: (customType: string, renderer: typeof renderRebased) => {
+				if (customType === REBASED_ENTRY_TYPE) renderRebased = renderer;
+			},
+		} as unknown as ExtensionAPI;
+		registerUserAgentRenderer(pi);
+		const identityTheme = {
+			bold: (text: string) => text,
+			fg: (_color: string, text: string) => text,
+		} as Theme;
+
+		const rendered = renderRebased
+			?.({ data: { sessionId: "0199-abcd" } }, { expanded: false }, identityTheme)
+			?.render(120)
+			.join("\n");
+
+		expect(rendered?.trim()).toBe("Rebased session 0199-abcd into this conversation");
+		expect(
+			renderRebased?.({}, { expanded: false }, identityTheme),
+			"Expected an entry with no data to render nothing rather than a broken line",
+		).toBeUndefined();
 	});
 });
 

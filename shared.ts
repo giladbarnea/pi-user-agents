@@ -16,7 +16,7 @@ export type Theme = ExtensionCommandContext["ui"]["theme"];
 export type UIContext = ExtensionCommandContext["ui"];
 
 export type AgentCommandName = "agent";
-export type MainContextState = "separate" | "will-join" | "joined";
+export type MainContextState = "separate" | "will-join" | "joined" | "rebased";
 export type AgentStatus =
 	| "starting"
 	| "running"
@@ -41,6 +41,10 @@ export type AgentEntryData = {
 };
 
 export type DetachedEntryData = {
+	sessionId: string;
+};
+
+export type RebasedEntryData = {
 	sessionId: string;
 };
 
@@ -82,6 +86,8 @@ export type RunningAgent = {
 	invocation: string;
 	/** -j/--join: post invocation+result to the main agent and trigger its turn, instead of waiting quietly for the next user prompt. */
 	notifyMainAgent: boolean;
+	/** Fingerprint of the main context the child was dispatched from ("[]" for -i); the rebase fast-forward base. */
+	dispatchBaseFingerprint: string;
 	mainContextState: MainContextState;
 	status: AgentStatus;
 	startedAt: number;
@@ -116,6 +122,7 @@ export type CompletedAgent = {
 	command: AgentCommandName;
 	modelLabel: string;
 	task: string;
+	dispatchBaseFingerprint: string;
 	mainContextState: MainContextState;
 	pendingJoinMessage?: AgentResultMessage;
 	ok: boolean;
@@ -129,8 +136,17 @@ export type CompletedAgent = {
 	contextPercent?: number;
 };
 
+/** The mechanism that fast-forwards a child conversation onto the main session, injected into the widget. */
+export type RebaseDelivery = {
+	/** Whether the main session's live context still equals this agent's dispatch base. */
+	canDeliver(agent: RunningAgent | CompletedAgent): boolean;
+	/** Append the processed child conversation onto the main session. */
+	deliver(agent: RunningAgent | CompletedAgent, messages: AgentMessage[]): void;
+};
+
 export const MESSAGE_TYPE = "pi-user-agents";
 export const DETACHED_ENTRY_TYPE = "pi-user-agents-detached";
+export const REBASED_ENTRY_TYPE = "pi-user-agents-rebased";
 export const WIDGET_KEY = "pi-user-agents";
 export const STEERING_LOG_PATH = `${tmpdir()}/pi-user-agents-steer.log`;
 
@@ -172,6 +188,7 @@ export function contextLabel(inheritedContext: boolean): string {
 export function mainContextLabel(state: MainContextState | undefined): string | undefined {
 	if (state === "will-join") return "will join context";
 	if (state === "joined") return "joined context";
+	if (state === "rebased") return "rebased into context";
 	return undefined;
 }
 

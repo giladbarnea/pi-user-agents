@@ -30,6 +30,22 @@ A plain `<user_agent>` tag follows it. The tag contains only the model and inher
 
 One selection rule builds the body. It keeps every user message. Before each next user message, it keeps only the latest assistant response. It applies the same rule after the final user message. Tool calls, thinking, tool results, and other message roles stay out.
 
+## Rebase
+
+`r` fast-forwards the raw child conversation onto the dispatching session. Three Pi facts shape the mechanism:
+
+1. The main agent's next LLM call reads the in-memory `agent.state.messages`, not the session file, and the TUI transcript renders from `AgentSession` events, not from the `SessionManager`. Appending entries alone reaches neither.
+2. Extensions have no path to the main `AgentSession`, so the state cannot be pushed in place.
+3. On `ctx.switchSession()` the host rebuilds both from the file — `agent.state.messages` from `buildSessionContext()` and the transcript from `buildContextEntries()` — while tearing the extension runtime down (`session_shutdown`, then a fresh extension instance).
+
+Delivery therefore appends the processed messages through the session manager (`ctx.sessionManager` is typed `ReadonlySessionManager`, but the runtime object is the writable `SessionManager` — one cast), drops a persisted `pi-user-agents-rebased` breadcrumb entry naming the child session, and calls `ctx.switchSession(<current session file>)`. Not `ctx.reload()` — that one reloads extensions and resources only and never re-reads the session file.
+
+Message processing (`selectRebaseMessages`) keeps the conversation raw: the first user message becomes the plain task (dropping the internal background-process prefix), custom messages and the child's own compaction/branch summaries are dropped, everything else passes verbatim.
+
+The fast-forward precondition is fingerprint equality: at dispatch the agent stores `JSON.stringify` of the inherited context messages (`[]` for `-i`), and `r` is offered only while the main session's current `buildSessionContext().messages` fingerprint still matches. The live fingerprint is cached per session manager and recomputed only when the branch leaf moves, so TUI-only entries (result cards, detach lines) move the leaf, trigger one recompute, and correctly do not block the rebase. One rule covers isolated agents too: their base is empty, so they rebase only onto a still-empty session.
+
+Because the reload tears the extension down, live widget rows cannot survive it: `r` is withheld while any agent is mid-turn, and the remaining parked and completed agents are detached first through the ordinary detach paths, so every one of them leaves its `Detached session …` breadcrumb before the switch.
+
 ## Child session persistence
 
 Every dispatched agent gets a persisted `SessionManager.create(cwd, undefined, { parentSession })` rather than an in-memory one, so its conversation is an ordinary Pi session file from birth. `parentSession` is a *path*, and it records the main session that dispatched the agent — the same field `/fork` uses, surfaced by `SessionManager.list()` as `parentSessionPath`. There is no API to promote an in-memory session to disk later: `SessionManager` fixes `persist` at construction, and both `_persist()` and `_rewriteFile()` return early when it is false, so `setSessionFile()` on an in-memory manager sets a path and writes nothing.
@@ -37,7 +53,7 @@ Every dispatched agent gets a persisted `SessionManager.create(cwd, undefined, {
 Two ordering constraints follow from `createAgentSession`:
 
 1. **Build the session while its manager is still empty.** Pi writes the `model_change` and `thinking_level_change` entries only on the empty-session path. Seed messages first and those entries never appear, so a resumed child falls back to `findInitialModel` instead of the model it was dispatched with.
-2. **Route the inherited snapshot through the session manager.** Persistence runs off message events, so the old `session.agent.state.messages = inherited` assignment never reached the file. `persistInheritedMessages` appends it entry by entry, then the agent state is set to the same list.
+2. **Route the inherited snapshot through the session manager.** Persistence runs off message events, so the old `session.agent.state.messages = inherited` assignment never reached the file. `persistMessages` appends it entry by entry, then the agent state is set to the same list.
 
 That snapshot is already compaction-resolved, so at most one `compactionSummary` leads it. Each role takes its own append method — `appendCompaction`, `branchWithSummary`, `appendCustomMessageEntry`, `appendMessage` — because pi's own compaction and branch bookkeeping locates boundaries by entry type, and a summary written as a plain message entry would be invisible to it. `appendCompaction` wants a `firstKeptEntryId` the replay cannot know, but `buildContextEntries` only consults it for entries *before* the compaction entry; a leading compaction has none, so the value is never read.
 

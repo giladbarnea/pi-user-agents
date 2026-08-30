@@ -15,6 +15,7 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { type AgentValueValidator, parseAgentCommand } from "./command-line.js";
+import { conversationFingerprint, mainContextFingerprint } from "./rebase.js";
 import type {
 	AgentCommandName,
 	AgentMessage,
@@ -24,10 +25,18 @@ import type {
 	ExtensionCommandContext,
 	Model,
 	ParsedAgentCommand,
+	RebaseDelivery,
+	RebasedEntryData,
 	RunningAgent,
 	ThinkingLevel,
 } from "./shared.js";
-import { errorMessage, formatModel, formatModelLabel, logSteering } from "./shared.js";
+import {
+	errorMessage,
+	formatModel,
+	formatModelLabel,
+	logSteering,
+	REBASED_ENTRY_TYPE,
+} from "./shared.js";
 import {
 	buildAgentResultMessage,
 	formatStartNotification,
@@ -107,6 +116,7 @@ async function startUserAgent(
 		model,
 		parsed,
 		invocation,
+		conversationFingerprint(inheritedMessages),
 	);
 
 	runningAgents.add(runningAgent);
@@ -146,6 +156,7 @@ function createRunningAgent(
 	model: Model,
 	parsed: ParsedAgentCommand,
 	invocation: string,
+	dispatchBaseFingerprint: string,
 ): RunningAgent {
 	return {
 		id: `user-${sequenceNumber.toString(36)}`,
@@ -157,6 +168,7 @@ function createRunningAgent(
 		task: parsed.task,
 		invocation,
 		notifyMainAgent: parsed.context,
+		dispatchBaseFingerprint,
 		mainContextState: parsed.context ? "will-join" : "separate",
 		status: "starting",
 		startedAt: Date.now(),
@@ -185,6 +197,47 @@ function postUserAgentResult(
 		pi.appendEntry(message.customType, { content: message.content, details: message.details });
 	}
 	return true;
+}
+
+/**
+ * The rebase mechanism: fast-forward a child conversation onto the session that dispatched it.
+ *
+ * Delivery appends the messages to the main session file, drops a persisted breadcrumb naming
+ * the child session, and asks the host to reload the session from its own file — the one path
+ * that rebuilds both the live LLM context and the TUI transcript (see INTERNALS.md).
+ */
+export function createRebaseDelivery(
+	pi: ExtensionAPI,
+	getSessionContext: () => ExtensionCommandContext | undefined,
+): RebaseDelivery {
+	return {
+		canDeliver: (agent) => {
+			const ctx = getSessionContext();
+			return (
+				ctx !== undefined &&
+				mainContextFingerprint(ctx.sessionManager) === agent.dispatchBaseFingerprint
+			);
+		},
+		deliver: (agent, messages) => {
+			const ctx = getSessionContext();
+			if (!ctx) throw new Error("No dispatching session context to rebase onto");
+			// The runtime object behind the extension's readonly facade is the writable SessionManager.
+			const sessionManager = ctx.sessionManager as unknown as SessionManager;
+			persistMessages(sessionManager, messages);
+			pi.appendEntry<RebasedEntryData>(REBASED_ENTRY_TYPE, { sessionId: agent.sessionId });
+			const sessionFile = sessionManager.getSessionFile();
+			if (!sessionFile) throw new Error("The main session has no file to reload from");
+			void ctx.switchSession(sessionFile).then(
+				(result) => {
+					if (result.cancelled && ctx.hasUI)
+						ctx.ui.notify("Rebase reload was cancelled; run /reload to sync the transcript", "warning");
+				},
+				(error) => {
+					if (ctx.hasUI) ctx.ui.notify(`Rebase reload failed: ${errorMessage(error)}`, "error");
+				},
+			);
+		},
+	};
 }
 
 /** Session inputs derived from forwarded pi CLI options, ready to hand to the child session. */
@@ -528,7 +581,7 @@ async function createChildSession(
 	await session.bindExtensions({ mode: "print" });
 	logSteering(runningAgent.id, "session-bound", { streaming: session.isStreaming });
 	if (inheritedMessages.length > 0) {
-		persistInheritedMessages(childSessionManager, inheritedMessages);
+		persistMessages(childSessionManager, inheritedMessages);
 		session.agent.state.messages = inheritedMessages;
 		logSteering(runningAgent.id, "context-inherited", { messageCount: inheritedMessages.length });
 	}
@@ -540,7 +593,7 @@ async function createChildSession(
  * same conversation the live one saw. Each role goes through its own append method: the
  * snapshot is already compaction-resolved, so its summary leads the child's own branch.
  */
-export function persistInheritedMessages(
+export function persistMessages(
 	sessionManager: SessionManager,
 	messages: readonly AgentMessage[],
 ): void {
