@@ -16,7 +16,7 @@ export type Theme = ExtensionCommandContext["ui"]["theme"];
 export type UIContext = ExtensionCommandContext["ui"];
 
 export type AgentCommandName = "agent";
-export type MainContextState = "separate" | "will-join" | "joined" | "rebased";
+export type MainContextState = "separate" | "will-squash" | "squashed" | "rebased";
 export type AgentStatus =
 	| "starting"
 	| "running"
@@ -27,7 +27,7 @@ export type AgentStatus =
 
 export type ParsedAgentCommand = {
 	isolate: boolean;
-	context: boolean;
+	squash: boolean;
 	/** Leading pi CLI tokens (minus the extension's own options) to forward to the child, e.g. ["--thinking", "high"]. */
 	forwardedArgs: string[];
 	task: string;
@@ -44,8 +44,24 @@ export type DetachedEntryData = {
 	sessionId: string;
 };
 
+export type RebaseStats = {
+	messageCount: number;
+	tokenEstimate: number;
+	compactionCount: number;
+};
+
 export type RebasedEntryData = {
 	sessionId: string;
+	/** Absent on entries persisted before stats existed. */
+	stats?: RebaseStats;
+};
+
+/**
+ * A child compaction captured from its compaction_end event. keptTailCount records how many
+ * messages the compaction kept verbatim, so a rebase replay can restore the exact boundary.
+ */
+export type ChildCompactionMessage = Extract<AgentMessage, { role: "compactionSummary" }> & {
+	keptTailCount?: number;
 };
 
 export type AgentResultMessage = {
@@ -82,9 +98,9 @@ export type RunningAgent = {
 	model: string;
 	modelLabel: string;
 	task: string;
-	/** The slash command line as the user typed it, e.g. `/agent -j fix the bug`. */
+	/** The slash command line as the user typed it, e.g. `/agent -s fix the bug`. */
 	invocation: string;
-	/** -j/--join: post invocation+result to the main agent and trigger its turn, instead of waiting quietly for the next user prompt. */
+	/** -s/--squash: post invocation+result to the main agent and trigger its turn, instead of waiting quietly for the next user prompt. */
 	notifyMainAgent: boolean;
 	/** Fingerprint of the main context the child was dispatched from ("[]" for -i); the rebase fast-forward base. */
 	dispatchBaseFingerprint: string;
@@ -103,8 +119,8 @@ export type RunningAgent = {
 	latestFinalizedMessage?: AgentMessage;
 	error?: string;
 	session?: AgentSession;
-	/** Latest completed turn's result message, deliverable to the main agent via the overlay's join action. */
-	pendingJoinMessage?: AgentResultMessage;
+	/** Latest completed turn's result message, deliverable to the main agent via the overlay's squash action. */
+	pendingSquashMessage?: AgentResultMessage;
 	/** Starts another turn on an idle agent; assigned while the lifecycle loop awaits the next instruction. */
 	resume?: (instruction: string) => void;
 	/** Ends an idle agent's lifecycle without another turn; assigned alongside resume. */
@@ -124,7 +140,7 @@ export type CompletedAgent = {
 	task: string;
 	dispatchBaseFingerprint: string;
 	mainContextState: MainContextState;
-	pendingJoinMessage?: AgentResultMessage;
+	pendingSquashMessage?: AgentResultMessage;
 	ok: boolean;
 	responseText: string;
 	messages: AgentMessage[];
@@ -186,8 +202,8 @@ export function contextLabel(inheritedContext: boolean): string {
 }
 
 export function mainContextLabel(state: MainContextState | undefined): string | undefined {
-	if (state === "will-join") return "will join context";
-	if (state === "joined") return "joined context";
+	if (state === "will-squash") return "will squash into context";
+	if (state === "squashed") return "squashed messages into context";
 	if (state === "rebased") return "rebased into context";
 	return undefined;
 }

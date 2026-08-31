@@ -55,14 +55,14 @@ export function reportCommandError(
 }
 
 /**
- * Select the joined role messages from a child transcript.
+ * Select the squashed role messages from a child transcript.
  *
- * @example selectJoinedMessages([{ role: "user", content: "hello", timestamp: 0 }]).length // 1
+ * @example selectSquashedMessages([{ role: "user", content: "hello", timestamp: 0 }]).length // 1
  */
-type JoinedMessage = Extract<AgentMessage, { role: "user" | "assistant" }>;
+type SquashedMessage = Extract<AgentMessage, { role: "user" | "assistant" }>;
 
-export function selectJoinedMessages(messages: readonly AgentMessage[]): JoinedMessage[] {
-	const selected: JoinedMessage[] = [];
+export function selectSquashedMessages(messages: readonly AgentMessage[]): SquashedMessage[] {
+	const selected: SquashedMessage[] = [];
 	let latestAssistant: Extract<AgentMessage, { role: "assistant" }> | undefined;
 	for (const message of messages) {
 		if (message.role === "assistant" && roleMessageText(message).trim()) {
@@ -112,13 +112,13 @@ export function buildAgentResultMessage(
 	};
 }
 
-const JOINED_CONVERSATION_PREFACE =
+const SQUASHED_CONVERSATION_PREFACE =
 	"The user has dispatched a background sub-agent with a task. The sub-agent is done. The following is the back and forth between them:";
 
 export function formatResultMessage(agent: RunningAgent): string {
-	const messages = selectJoinedMessages(agent.conversationMessages);
+	const messages = selectSquashedMessages(agent.conversationMessages);
 	const lines = [
-		JOINED_CONVERSATION_PREFACE,
+		SQUASHED_CONVERSATION_PREFACE,
 		`<user_agent model="${escapeAttribute(agent.model)}" inherited_context="${agent.inheritedContext}">`,
 	];
 	let firstUserMessage = true;
@@ -137,7 +137,7 @@ export function formatResultMessage(agent: RunningAgent): string {
 	return lines.join("\n");
 }
 
-function roleMessageText(message: JoinedMessage): string {
+function roleMessageText(message: SquashedMessage): string {
 	if (typeof message.content === "string") return message.content;
 	return message.content
 		.flatMap((part) => (part.type === "text" ? [part.text] : []))
@@ -216,20 +216,37 @@ export function registerUserAgentRenderer(pi: ExtensionAPI): void {
 					)
 				: undefined,
 	);
+	// Pi's chat container does not pad renderer components; its own chat lines self-pad with paddingX 1.
 	pi.registerEntryRenderer<DetachedEntryData>(DETACHED_ENTRY_TYPE, (entry, _state, theme) =>
 		entry.data
-			? new Text(theme.fg("dim", `Detached session ${entry.data.sessionId}`), 0, 0)
+			? new Text(theme.fg("dim", `Detached session ${entry.data.sessionId}`), 1, 0)
 			: undefined,
 	);
 	pi.registerEntryRenderer<RebasedEntryData>(REBASED_ENTRY_TYPE, (entry, _state, theme) =>
-		entry.data
-			? new Text(
-					theme.fg("dim", `Rebased session ${entry.data.sessionId} into this conversation`),
-					0,
-					0,
-				)
-			: undefined,
+		entry.data ? new Text(theme.fg("dim", formatRebasedLine(entry.data)), 1, 0) : undefined,
 	);
+}
+
+function formatRebasedLine(data: RebasedEntryData): string {
+	const base = `Rebased session ${data.sessionId} into this conversation`;
+	if (!data.stats) return base;
+	const parts = [
+		`added ${data.stats.messageCount} message${data.stats.messageCount === 1 ? "" : "s"}`,
+		`~${formatTokenCount(data.stats.tokenEstimate)} tokens`,
+	];
+	if (data.stats.compactionCount > 0)
+		parts.push(
+			`${data.stats.compactionCount} compaction event${data.stats.compactionCount === 1 ? "" : "s"}`,
+		);
+	return `${base} (${parts.join(", ")})`;
+}
+
+/**
+ * @example formatTokenCount(135_264) // "135K"
+ * @example formatTokenCount(12) // "12"
+ */
+function formatTokenCount(tokens: number): string {
+	return tokens < 1000 ? `${tokens}` : `${Math.round(tokens / 1000)}K`;
 }
 
 function liveAgentCard(
@@ -262,7 +279,7 @@ function renderAgentCard(
 	if (parts.length > 0) text += ` ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}`;
 	if (task) text += `\n  ${theme.fg("dim", `task: ${truncatePlain(task, 88)}`)}`;
 	const card = new Container();
-	card.addChild(new Text(text, 0, 0));
+	card.addChild(new Text(text, 1, 0));
 	card.addChild(body);
 	return card;
 }
@@ -281,12 +298,12 @@ function renderAgentCardBody(
 		"No output.";
 	if (expanded)
 		return ok
-			? new Markdown(output, 2, 0, getMarkdownTheme())
-			: new Text(theme.fg("error", output), 2, 0);
+			? new Markdown(output, 3, 0, getMarkdownTheme())
+			: new Text(theme.fg("error", output), 3, 0);
 
 	const previewText = `⎿  ${truncatePlain(details?.responsePreview ?? output, 110)}`;
-	if (!ok) return new Text(`  ${theme.fg("error", previewText)}`, 0, 0);
-	return new Markdown(previewText, 2, 0, getMarkdownTheme(), {
+	if (!ok) return new Text(`  ${theme.fg("error", previewText)}`, 1, 0);
+	return new Markdown(previewText, 3, 0, getMarkdownTheme(), {
 		color: (value) => theme.fg("dim", value),
 	});
 }

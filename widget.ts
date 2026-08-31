@@ -56,7 +56,7 @@ export class UserAgentWidget {
 
 	constructor(
 		private readonly runningAgents: Set<RunningAgent>,
-		private readonly sendJoinedResult: (message: AgentResultMessage) => void,
+		private readonly sendSquashedResult: (message: AgentResultMessage) => void,
 		private readonly announceDetached: (sessionId: string) => void,
 		private readonly rebaseDelivery: RebaseDelivery,
 	) {}
@@ -74,7 +74,7 @@ export class UserAgentWidget {
 	addCompleted(
 		agent: RunningAgent,
 		resultMessage: AgentResultMessage,
-		options: { joinable: boolean },
+		options: { squashable: boolean },
 	): void {
 		this.completedAgents.push({
 			id: agent.id,
@@ -84,7 +84,7 @@ export class UserAgentWidget {
 			task: agent.task,
 			dispatchBaseFingerprint: agent.dispatchBaseFingerprint,
 			mainContextState: agent.mainContextState,
-			pendingJoinMessage: options.joinable ? resultMessage : undefined,
+			pendingSquashMessage: options.squashable ? resultMessage : undefined,
 			ok: resultMessage.details.ok,
 			responseText: agent.responseText,
 			messages: structuredClone(transcriptMessages(agent)),
@@ -290,10 +290,11 @@ export class UserAgentWidget {
 						agent,
 						theme,
 						done,
-						() => this.canJoinMainContext(agent.id),
-						() => this.joinMainContext(agent.id),
+						() => this.canSquashMainContext(agent.id),
+						() => this.squashMainContext(agent.id),
 						() => this.canRebaseMainContext(agent.id),
 						() => this.rebaseMainContext(agent.id),
+						() => this.rebaseBlockReason(agent.id),
 						() => {
 							if (isRunningAgent(agent)) this.interruptRunning(agent);
 						},
@@ -325,53 +326,61 @@ export class UserAgentWidget {
 		return [...this.runningAgents].find((agent) => agent.id === agentId && agent.status === "idle");
 	}
 
-	private canJoinMainContext(agentId: string): boolean {
+	private canSquashMainContext(agentId: string): boolean {
 		return this.deliverableAgent(agentId) !== undefined;
 	}
 
-	confirmMainContextJoin(agentId: string): boolean {
+	confirmMainContextSquash(agentId: string): boolean {
 		const agents = [
 			...[...this.runningAgents].filter((candidate) => candidate.id === agentId),
 			...this.completedAgents.filter((candidate) => candidate.id === agentId),
-		].filter((candidate) => candidate.mainContextState === "will-join");
+		].filter((candidate) => candidate.mainContextState === "will-squash");
 		if (agents.length === 0) return false;
-		for (const agent of agents) agent.mainContextState = "joined";
+		for (const agent of agents) agent.mainContextState = "squashed";
 		this.update();
 		return true;
 	}
 
-	private joinMainContext(agentId: string): void {
+	private squashMainContext(agentId: string): void {
 		const idleAgent = this.idleAgent(agentId);
 		if (idleAgent) {
-			this.joinIdleAgent(idleAgent);
+			this.squashIdleAgent(idleAgent);
 			return;
 		}
 		const completedAgent = this.completedAgents.find((agent) => agent.id === agentId);
-		const message = completedAgent?.pendingJoinMessage;
+		const message = completedAgent?.pendingSquashMessage;
 		if (!completedAgent || !message) return;
 
-		completedAgent.pendingJoinMessage = undefined;
-		completedAgent.mainContextState = "will-join";
-		message.details.mainContextState = "will-join";
-		this.sendJoinedResult(message);
-		logSteering(agentId, "joined-main-context", { display: message.display });
+		completedAgent.pendingSquashMessage = undefined;
+		completedAgent.mainContextState = "will-squash";
+		message.details.mainContextState = "will-squash";
+		this.sendSquashedResult(message);
+		logSteering(agentId, "squashed-main-context", { display: message.display });
 		this.update();
 	}
 
-	/** An agent whose latest turn result is still deliverable: idle live, or completed and joinable. */
+	/** An agent whose latest turn result is still deliverable: idle live, or completed and squashable. */
 	private deliverableAgent(agentId: string): RunningAgent | CompletedAgent | undefined {
 		const idleAgent = this.idleAgent(agentId);
-		if (idleAgent?.pendingJoinMessage) return idleAgent;
+		if (idleAgent?.pendingSquashMessage) return idleAgent;
 		return this.completedAgents.find(
-			(agent) => agent.id === agentId && agent.pendingJoinMessage !== undefined,
+			(agent) => agent.id === agentId && agent.pendingSquashMessage !== undefined,
 		);
 	}
 
 	private canRebaseMainContext(agentId: string): boolean {
-		// The rebase reload tears the extension runtime down, which would abort a mid-turn sibling.
-		if ([...this.runningAgents].some(isLiveAgent)) return false;
+		return this.deliverableAgent(agentId) !== undefined && this.rebaseBlockReason(agentId) === undefined;
+	}
+
+	/** Why a deliverable result cannot rebase right now; undefined when it can, or when nothing is deliverable. */
+	private rebaseBlockReason(agentId: string): string | undefined {
 		const agent = this.deliverableAgent(agentId);
-		return agent !== undefined && this.rebaseDelivery.canDeliver(agent);
+		if (!agent) return undefined;
+		// The session switch tears the extension runtime down, which would abort a mid-turn sibling.
+		if ([...this.runningAgents].some(isLiveAgent)) return "another agent is mid-turn";
+		if (!this.rebaseDelivery.canDeliver(agent))
+			return "the main session has drifted since dispatch";
+		return undefined;
 	}
 
 	/** Fast-forward the raw child conversation onto the main session, then retire the agent. */
@@ -382,34 +391,34 @@ export class UserAgentWidget {
 		// The reload will not preserve live rows; give every sibling its resumable-session breadcrumb.
 		for (const other of [...this.runningAgents]) if (other !== agent) this.closeRunning(other);
 		for (const other of [...this.completedAgents]) if (other !== agent) this.removeCompleted(other);
-		const message = agent.pendingJoinMessage;
+		const message = agent.pendingSquashMessage;
 		this.rebaseDelivery.deliver(
 			agent,
 			selectRebaseMessages(agent.task, structuredClone(transcriptMessages(agent))),
 		);
-		agent.pendingJoinMessage = undefined;
+		agent.pendingSquashMessage = undefined;
 		agent.mainContextState = "rebased";
 		if (isRunningAgent(agent)) {
 			agent.status = "posted";
-			if (message) this.addCompleted(agent, message, { joinable: false });
+			if (message) this.addCompleted(agent, message, { squashable: false });
 			agent.retire?.();
 		}
 		logSteering(agentId, "rebased-main-context");
 		this.update();
 	}
 
-	/** Joining is one of the two terminal actions on a live idle agent: deliver the result, snapshot it, retire the session. */
-	private joinIdleAgent(agent: RunningAgent): void {
-		const message = agent.pendingJoinMessage;
+	/** Squashing is one of the two terminal actions on a live idle agent: deliver the result, snapshot it, retire the session. */
+	private squashIdleAgent(agent: RunningAgent): void {
+		const message = agent.pendingSquashMessage;
 		if (!message) return;
-		agent.pendingJoinMessage = undefined;
-		agent.mainContextState = "will-join";
-		message.details.mainContextState = "will-join";
+		agent.pendingSquashMessage = undefined;
+		agent.mainContextState = "will-squash";
+		message.details.mainContextState = "will-squash";
 		agent.status = "posted";
-		this.addCompleted(agent, message, { joinable: false });
-		this.sendJoinedResult(message);
+		this.addCompleted(agent, message, { squashable: false });
+		this.sendSquashedResult(message);
 		agent.retire?.();
-		logSteering(agent.id, "joined-main-context", { display: message.display, live: true });
+		logSteering(agent.id, "squashed-main-context", { display: message.display, live: true });
 		this.update();
 	}
 

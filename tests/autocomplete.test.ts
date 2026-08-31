@@ -48,17 +48,17 @@ describe("agent command editor autocomplete", () => {
 		);
 	});
 
-	test("offers and accepts both join option spellings", async () => {
-		for (const joinOption of ["-j", "--join"]) {
+	test("offers and accepts both squash option spellings", async () => {
+		for (const squashOption of ["-s", "--squash"]) {
 			const harness = await createEditorHarness();
-			harness.type(`/agent ${joinOption}`);
-			await harness.waitForRender((rendered) => rendered.includes("Join the completed result"));
+			harness.type(`/agent ${squashOption}`);
+			await harness.waitForRender((rendered) => rendered.includes("Squash the completed result"));
 			harness.press("\t");
 
 			assert.equal(
 				harness.editor.getText(),
-				`/agent ${joinOption} `,
-				`Expected autocomplete to accept ${joinOption}`,
+				`/agent ${squashOption} `,
+				`Expected autocomplete to accept ${squashOption}`,
 			);
 		}
 	});

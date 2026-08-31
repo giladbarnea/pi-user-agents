@@ -57,7 +57,7 @@ export type AgentSemanticToken = {
 
 export type AgentArgumentScan = {
 	isolate: boolean;
-	context: boolean;
+	squash: boolean;
 	forwardedArgs: string[];
 	/** Ordered, non-overlapping semantic tokens over the argument text. Prose stays untokenized. */
 	tokens: AgentSemanticToken[];
@@ -115,12 +115,12 @@ export const AGENT_OPTIONS: readonly AgentOptionDefinition[] = [
 		description: "Start without parent-session context",
 	},
 	{
-		semanticId: "context",
-		names: ["-j", "--join"],
+		semanticId: "squash",
+		names: ["-s", "--squash"],
 		role: "extension",
 		arity: "boolean",
 		autocomplete: true,
-		description: "Join the completed result into the main agent context",
+		description: "Squash the completed result into the main agent context",
 	},
 	{
 		semanticId: "provider",
@@ -360,7 +360,7 @@ export function scanAgentArguments(
 	const tokens: AgentSemanticToken[] = [];
 	const forwardedArgs: string[] = [];
 	let isolate = false;
-	let context = false;
+	let squash = false;
 	let blocked: AgentSemanticToken | undefined;
 	let consumedOption = false;
 	let position = 0;
@@ -393,8 +393,8 @@ export function scanAgentArguments(
 			}
 		} else if (option.semanticId === "isolate") {
 			isolate = true;
-		} else if (option.semanticId === "context") {
-			context = true;
+		} else if (option.semanticId === "squash") {
+			squash = true;
 		} else if (option.arity === "value") {
 			forwardedArgs.push(option.forwardName ?? token);
 			const read = readValueSpan(args, position);
@@ -427,7 +427,7 @@ export function scanAgentArguments(
 	}
 	const scan: AgentArgumentScan = {
 		isolate,
-		context,
+		squash,
 		forwardedArgs,
 		tokens,
 		proseStart,
@@ -487,11 +487,11 @@ export function parseAgentCommand(args: string, command: AgentCommandName): Pars
 	}
 	if (!scan.prose.trim())
 		throw new Error(
-			`Usage: /${command} [pi options] [-m MODELNAME] [-i|--isolate] [-j|--join] "<task>"`,
+			`Usage: /${command} [pi options] [-m MODELNAME] [-i|--isolate] [-s|--squash] "<task>"`,
 		);
 	return {
 		isolate: scan.isolate,
-		context: scan.context,
+		squash: scan.squash,
 		forwardedArgs: scan.forwardedArgs,
 		task: scan.task,
 		warnings: scan.warnings,

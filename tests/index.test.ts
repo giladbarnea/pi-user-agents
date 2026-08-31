@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { MessageEndEvent } from "@earendil-works/pi-coding-agent";
-import { confirmMainContextJoin } from "../index.ts";
+import { confirmMainContextSquash } from "../index.ts";
 import type { AgentResultMessage, RebaseDelivery, RunningAgent } from "../shared.js";
 import { UserAgentWidget } from "../widget.ts";
 
@@ -12,7 +12,7 @@ const noRebase: RebaseDelivery = {
 	},
 };
 
-function completedJoin(): {
+function completedSquash(): {
 	widget: UserAgentWidget;
 	message: AgentResultMessage;
 } {
@@ -24,10 +24,10 @@ function completedJoin(): {
 		model: "provider/model",
 		modelLabel: "model",
 		task: "review the migration",
-		invocation: "/agent -j review the migration",
+		invocation: "/agent -s review the migration",
 		notifyMainAgent: true,
 		dispatchBaseFingerprint: "[]",
-		mainContextState: "will-join",
+		mainContextState: "will-squash",
 		status: "posted",
 		startedAt: 1_000,
 		turnStartedAt: 1_000,
@@ -55,7 +55,7 @@ function completedJoin(): {
 		},
 	};
 	const widget = new UserAgentWidget(new Set(), () => undefined, () => undefined, noRebase);
-	widget.addCompleted(agent, message, { joinable: false });
+	widget.addCompleted(agent, message, { squashable: false });
 	return { widget, message };
 }
 
@@ -78,40 +78,40 @@ function messageEnd(
 }
 
 describe("parent main-context confirmation", () => {
-	test("only this extension's result message confirms a scheduled join", () => {
-		const { widget, message } = completedJoin();
+	test("only this extension's result message confirms a scheduled squash", () => {
+		const { widget, message } = completedSquash();
 		const unrelated = messageEnd(message, message.details, "another-extension");
 
-		expect(confirmMainContextJoin(unrelated, widget)).toBeUndefined();
-		const result = confirmMainContextJoin(messageEnd(message), widget);
+		expect(confirmMainContextSquash(unrelated, widget)).toBeUndefined();
+		const result = confirmMainContextSquash(messageEnd(message), widget);
 
 		expect(result?.message?.role).toBe("custom");
 		if (result?.message?.role !== "custom") throw new Error("Expected a custom result message");
 		expect(result.message.details).toMatchObject({
 			agentId: "user-1",
-			mainContextState: "joined",
+			mainContextState: "squashed",
 		});
-		expect(message.details.mainContextState).toBe("joined");
-		expect(confirmMainContextJoin(messageEnd(message), widget)).toBeUndefined();
+		expect(message.details.mainContextState).toBe("squashed");
+		expect(confirmMainContextSquash(messageEnd(message), widget)).toBeUndefined();
 	});
 
 	test("confirms the chat event after its widget row was removed", () => {
-		const { message } = completedJoin();
+		const { message } = completedSquash();
 		const emptyWidget = new UserAgentWidget(new Set(), () => undefined, () => undefined, noRebase);
 
-		const result = confirmMainContextJoin(messageEnd(message), emptyWidget);
+		const result = confirmMainContextSquash(messageEnd(message), emptyWidget);
 
 		expect(result?.message?.role).toBe("custom");
-		expect(message.details.mainContextState).toBe("joined");
+		expect(message.details.mainContextState).toBe("squashed");
 	});
 
 	test("ignores a separate result even when its agent id matches", () => {
-		const { widget, message } = completedJoin();
+		const { widget, message } = completedSquash();
 		const separate = messageEnd(message, {
 			...message.details,
 			mainContextState: "separate",
 		});
 
-		expect(confirmMainContextJoin(separate, widget)).toBeUndefined();
+		expect(confirmMainContextSquash(separate, widget)).toBeUndefined();
 	});
 });

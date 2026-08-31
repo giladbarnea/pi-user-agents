@@ -1,5 +1,6 @@
 import { buildSessionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage, ExtensionCommandContext } from "./shared.js";
+import { MESSAGE_TYPE } from "./shared.js";
 
 type MainSessionManager = ExtensionCommandContext["sessionManager"];
 
@@ -30,8 +31,11 @@ export function mainContextFingerprint(sessionManager: MainSessionManager): stri
 
 /**
  * Select the child conversation messages to rebase onto the main session, so the record reads
- * as if the user prompted the main session directly. The first user message carries the
- * extension's internal background-process prefix; it is replaced by the plain task.
+ * as if the user prompted the main session directly. The child's history passes through
+ * verbatim — compactions included, so main inherits the child's context boundary — except the
+ * first user message, which carries the extension's internal background-process prefix and is
+ * replaced by the plain task, and this extension's own custom messages, which are the one
+ * trace of the user-agents machinery.
  */
 export function selectRebaseMessages(
 	task: string,
@@ -40,12 +44,7 @@ export function selectRebaseMessages(
 	let firstUserMessage = true;
 	const selected: AgentMessage[] = [];
 	for (const message of messages) {
-		if (
-			message.role === "custom" ||
-			message.role === "compactionSummary" ||
-			message.role === "branchSummary"
-		)
-			continue;
+		if (message.role === "custom" && message.customType === MESSAGE_TYPE) continue;
 		if (message.role === "user" && firstUserMessage) {
 			firstUserMessage = false;
 			selected.push({ ...message, content: task });

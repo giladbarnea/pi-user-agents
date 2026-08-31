@@ -10,7 +10,7 @@ from the declaration in `command-line.ts`.
 ```ts
 type ParsedAgentCommand = {
   isolate: boolean;          // -i / --isolate
-  context: boolean;          // -j / --join
+  squash: boolean;           // -s / --squash
   forwardedArgs: string[];   // recognized pi option tokens (+values) in input order, e.g. ["--thinking","high"]
   task: string;              // the prose prompt (backslash escapes applied, quotes kept). Never empty.
   warnings: string[];        // advisory messages (see §5). May be empty.
@@ -43,11 +43,11 @@ leading whitespace (unchanged from today).
 |---|---|---|
 | `-m`, `--model` | value | Added to `forwardedArgs` as canonical `--model <value>` |
 | `-i`, `--isolate` | boolean | Consumed here; `isolate = true` |
-| `-j`, `--join` | boolean | Consumed here; `context = true` |
+| `-s`, `--squash` | boolean | Consumed here; `squash = true` |
 
 `-m` and `--model` are one semantic option. Both require an exact live model ID, canonical
 `provider/id` reference, or user-defined alias before resolving through Pi's `resolveCliModel()`
-path. A preceding `--provider` scopes either spelling. `-j` is the extension's join option.
+path. A preceding `--provider` scopes either spelling. `-s` is the extension's squash option.
 A model option with no value and no remaining task ends in the normal
 **usage error**.
 

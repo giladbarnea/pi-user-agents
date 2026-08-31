@@ -16,13 +16,13 @@ How a finished run reaches (or hides from) the main agent rests on two Pi SDK ch
 
 - **`pi.appendEntry(customType, data)` + `pi.registerEntryRenderer`** — the only channel that renders in the transcript while staying out of LLM context *forever*. Entries are persisted in the session file and re-rendered on reload. The entry's `data` is optional in the type — renderers must guard it.
 
-This extension maps the two extremes onto the `-j` flag: the default posts the result card via `appendEntry` (main agent structurally oblivious), and `-j` posts a visible custom message with `{ triggerTurn: true }` (steered mid-turn or answered immediately). Both channels share one card renderer in `transcript.ts`.
+This extension maps the two extremes onto the `-s` flag: the default posts the result card via `appendEntry` (main agent structurally oblivious), and `-s` posts a visible custom message with `{ triggerTurn: true }` (steered mid-turn or answered immediately). Both channels share one card renderer in `transcript.ts`.
 
-Immediate `-j` delivery and late `j join` delivery share one canonical message builder. Its `display` option prevents a second visible result card. Both paths use the same selected conversation and `{ triggerTurn: true }` delivery. For a run launched without `-j`, the context message stays hidden at join time because the TUI-only result card is already visible.
+Immediate `-s` delivery and late `s` squash delivery share one canonical message builder. Its `display` option prevents a second visible result card. Both paths use the same selected conversation and `{ triggerTurn: true }` delivery. For a run launched without `-s`, the context message stays hidden at squash time because the TUI-only result card is already visible.
 
-## Joined message format
+## Squashed message format
 
-The joined text starts with this sentence:
+The squashed text starts with this sentence:
 
 > The user has dispatched a background sub-agent with a task. The sub-agent is done. The following is the back and forth between them:
 
@@ -40,11 +40,15 @@ One selection rule builds the body. It keeps every user message. Before each nex
 
 Delivery therefore appends the processed messages through the session manager (`ctx.sessionManager` is typed `ReadonlySessionManager`, but the runtime object is the writable `SessionManager` — one cast), drops a persisted `pi-user-agents-rebased` breadcrumb entry naming the child session, and calls `ctx.switchSession(<current session file>)`. Not `ctx.reload()` — that one reloads extensions and resources only and never re-reads the session file.
 
-Message processing (`selectRebaseMessages`) keeps the conversation raw: the first user message becomes the plain task (dropping the internal background-process prefix), custom messages and the child's own compaction/branch summaries are dropped, everything else passes verbatim.
+Message processing (`selectRebaseMessages`) keeps the child's history verbatim, with two exceptions: the first user message becomes the plain task (dropping the internal background-process prefix), and this extension's own custom messages (`pi-user-agents`) are dropped — they are the one trace of the user-agents machinery. Everything else the child saw passes through, other extensions' custom messages included.
+
+A child compaction passes through deliberately and lands as a real `compaction` entry mid-file. `buildContextEntries` treats the latest compaction on the path as the context boundary, so after the switch main's LLM context is exactly the child's live context — summary, kept tail, then everything after — while the transcript keeps the full history. Dropping it would instead graft an over-window context onto main and force a fresh, lossy auto-compaction.
+
+Two mechanics make that exact. First, a live compaction emits no message event — only `compaction_end` — so the child subscription captures it there as a synthetic `compactionSummary` message, or the append-only conversation would never contain it. Second, the kept-tail boundary (`firstKeptEntryId`) is a child-session entry id that means nothing in the main session's file; but at `compaction_end` the child's live context is exactly `[summary, kept tail]`, so the capture records `keptTailCount`, and the rebase replay counts back that many context messages to pass the main-session id of the message that starts the tail. The tail may reach past the replayed messages into main's pre-existing context — a child that inherits a nearly full context compacts early — so the delivery prepends main's own per-message entry ids to the count.
 
 The fast-forward precondition is fingerprint equality: at dispatch the agent stores `JSON.stringify` of the inherited context messages (`[]` for `-i`), and `r` is offered only while the main session's current `buildSessionContext().messages` fingerprint still matches. The live fingerprint is cached per session manager and recomputed only when the branch leaf moves, so TUI-only entries (result cards, detach lines) move the leaf, trigger one recompute, and correctly do not block the rebase. One rule covers isolated agents too: their base is empty, so they rebase only onto a still-empty session.
 
-Because the reload tears the extension down, live widget rows cannot survive it: `r` is withheld while any agent is mid-turn, and the remaining parked and completed agents are detached first through the ordinary detach paths, so every one of them leaves its `Detached session …` breadcrumb before the switch.
+Because the session switch tears the extension down, live widget rows cannot survive it: `r` is withheld while any agent is mid-turn, and the remaining parked and completed agents are detached first through the ordinary detach paths, so every one of them leaves its `Detached session …` breadcrumb before the switch. The switch re-opens the same file, so the session id does not change.
 
 ## Child session persistence
 
@@ -61,7 +65,7 @@ The file itself appears on the child's first assistant message (`_persist` defer
 
 ## Detaching
 
-`d` `d` ends the live child session and drops its widget row. The session file is untouched, and the transcript gets a `pi-user-agents-detached` custom entry naming the session id so it can be resumed later. Both detach paths funnel through `closeRunning` and `removeCompleted`, which is where the announcement is made; joining and session shutdown deliberately do not announce.
+`d` `d` ends the live child session and drops its widget row. The session file is untouched, and the transcript gets a `pi-user-agents-detached` custom entry naming the session id so it can be resumed later. Both detach paths funnel through `closeRunning` and `removeCompleted`, which is where the announcement is made; squashing and session shutdown deliberately do not announce.
 
 ## Runtime sharing
 

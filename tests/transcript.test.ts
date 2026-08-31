@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type {
 	AgentEntryData,
+	RebasedEntryData,
 	AgentMessage,
 	AgentResultMessage,
 	DetachedEntryData,
@@ -15,7 +16,7 @@ import {
 	buildAgentResultMessage,
 	formatStartNotification,
 	registerUserAgentRenderer,
-	selectJoinedMessages,
+	selectSquashedMessages,
 } from "../transcript.js";
 
 function completedAgent(): RunningAgent {
@@ -64,16 +65,16 @@ function completedAgent(): RunningAgent {
 }
 
 describe("agent chat events", () => {
-	test("the start event shows only a scheduled main-context join", () => {
+	test("the start event shows only a scheduled main-context squash", () => {
 		const agent = completedAgent();
-		expect(formatStartNotification(agent)).not.toContain("join context");
+		expect(formatStartNotification(agent)).not.toContain("into context");
 
-		agent.mainContextState = "will-join";
-		expect(formatStartNotification(agent)).toContain("will join context");
+		agent.mainContextState = "will-squash";
+		expect(formatStartNotification(agent)).toContain("will squash into context");
 	});
 });
 
-describe("joined conversation selection", () => {
+describe("squashed conversation selection", () => {
 	test("keeps every user message and only the last assistant response before the next user", () => {
 		const messages = [
 			{ role: "user", content: "request 1" },
@@ -90,7 +91,7 @@ describe("joined conversation selection", () => {
 			{ role: "assistant", content: [{ type: "text", text: "response 3" }] },
 		] as AgentMessage[];
 
-		const selected = selectJoinedMessages(messages);
+		const selected = selectSquashedMessages(messages);
 
 		assert.deepEqual(
 			selected,
@@ -109,9 +110,9 @@ describe("joined conversation selection", () => {
 		] as AgentMessage[];
 
 		assert.deepEqual(
-			selectJoinedMessages(messages),
+			selectSquashedMessages(messages),
 			[messages[0], messages[3], messages[4]],
-			"Expected non-response assistant content to stay out of the joined conversation",
+			"Expected non-response assistant content to stay out of the squashed conversation",
 		);
 	});
 
@@ -130,7 +131,7 @@ describe("joined conversation selection", () => {
 
 		for (const testCase of cases) {
 			assert.deepEqual(
-				selectJoinedMessages(testCase.messages),
+				selectSquashedMessages(testCase.messages),
 				testCase.messages,
 				`Expected the ${testCase.name} boundary to retain every available conversation message`,
 			);
@@ -139,7 +140,7 @@ describe("joined conversation selection", () => {
 });
 
 describe("buildAgentResultMessage", () => {
-	test("joins the selected conversation in the plain role-tagged context payload", () => {
+	test("squashes the selected conversation in the plain role-tagged context payload", () => {
 		const agent = completedAgent();
 		const messages = [
 			{
@@ -182,11 +183,11 @@ describe("buildAgentResultMessage", () => {
 				"  </assistant_response>",
 				"</user_agent>",
 			].join("\n"),
-			"Expected the joined payload to contain only provenance attributes and the selected role messages",
+			"Expected the squashed payload to contain only provenance attributes and the selected role messages",
 		);
 	});
 
-	test("joins the append-only child conversation after model context compaction", () => {
+	test("squashes the append-only child conversation after model context compaction", () => {
 		const agent = Object.assign(completedAgent(), {
 			conversationMessages: [
 				{ role: "user", content: "internal background prefix and original task" },
@@ -216,7 +217,7 @@ describe("buildAgentResultMessage", () => {
 		assert.match(
 			message.content,
 			/  review the migration[\s\S]*  Initial response[\s\S]*  latest steering[\s\S]*  Final response/,
-			"Expected compaction to leave the complete child conversation available for joining",
+			"Expected compaction to leave the complete child conversation available for squashing",
 		);
 	});
 
@@ -328,7 +329,7 @@ describe("completed agent transcript card", () => {
 		expect(output).toContain("⎿  Almost. One stale instruction remains.");
 		expect(output).not.toContain("**Almost.**");
 		expect(output).not.toContain("Full finding");
-		expect(output).not.toContain("join context");
+		expect(output).not.toContain("into context");
 
 		const expandedEntry = renderEntry?.(entry, { expanded: true }, identityTheme);
 		const expandedEntryOutput = expandedEntry?.render(120).join("\n");
@@ -348,13 +349,13 @@ describe("completed agent transcript card", () => {
 			);
 		}
 
-		message.details.mainContextState = "will-join";
+		message.details.mainContextState = "will-squash";
 		const pendingOutput = component?.render(120).join("\n");
-		expect(pendingOutput).toContain("will join context");
+		expect(pendingOutput).toContain("will squash into context");
 
-		message.details.mainContextState = "joined";
-		const joinedOutput = component?.render(120).join("\n");
-		expect(joinedOutput).toContain("joined context");
+		message.details.mainContextState = "squashed";
+		const squashedOutput = component?.render(120).join("\n");
+		expect(squashedOutput).toContain("squashed messages into context");
 
 		const legacyAgent = completedAgent();
 		legacyAgent.responseText = "A full response from an older persisted entry.";
@@ -390,7 +391,7 @@ describe("rebased session entry", () => {
 		type RenderedComponent = { render(width: number): string[] } | undefined;
 		let renderRebased:
 			| ((
-					entry: { data?: { sessionId: string } },
+					entry: { data?: RebasedEntryData },
 					options: { expanded: boolean },
 					theme: Theme,
 			  ) => RenderedComponent)
@@ -408,11 +409,49 @@ describe("rebased session entry", () => {
 		} as Theme;
 
 		const rendered = renderRebased
-			?.({ data: { sessionId: "0199-abcd" } }, { expanded: false }, identityTheme)
+			?.(
+				{
+					data: {
+						sessionId: "0199-abcd",
+						stats: { messageCount: 32, tokenEstimate: 135_264, compactionCount: 1 },
+					},
+				},
+				{ expanded: false },
+				identityTheme,
+			)
 			?.render(120)
 			.join("\n");
 
-		expect(rendered?.trim()).toBe("Rebased session 0199-abcd into this conversation");
+		expect(rendered?.trim()).toBe(
+			"Rebased session 0199-abcd into this conversation (added 32 messages, ~135K tokens, 1 compaction event)",
+		);
+		expect(rendered?.startsWith(" "), "Expected the chat-idiom paddingX of 1").toBe(true);
+
+		const withoutCompactions = renderRebased
+			?.(
+				{
+					data: {
+						sessionId: "0199-abcd",
+						stats: { messageCount: 1, tokenEstimate: 12, compactionCount: 0 },
+					},
+				},
+				{ expanded: false },
+				identityTheme,
+			)
+			?.render(120)
+			.join("\n");
+		expect(withoutCompactions?.trim()).toBe(
+			"Rebased session 0199-abcd into this conversation (added 1 message, ~12 tokens)",
+		);
+
+		const legacyEntry = renderRebased
+			?.({ data: { sessionId: "0199-abcd" } }, { expanded: false }, identityTheme)
+			?.render(120)
+			.join("\n");
+		expect(
+			legacyEntry?.trim(),
+			"Expected an entry persisted before stats existed to render without them",
+		).toBe("Rebased session 0199-abcd into this conversation");
 		expect(
 			renderRebased?.({}, { expanded: false }, identityTheme),
 			"Expected an entry with no data to render nothing rather than a broken line",

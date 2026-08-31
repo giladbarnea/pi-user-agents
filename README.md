@@ -29,10 +29,10 @@ Classic dispatches:
 ```
 /agent write a handoff document for the work currently in progress
 /agent -i -m flash summarize what PARSER_SPEC.md guarantees
-/agent -j --thinking high find the root cause of the flaky widget test
+/agent -s --thinking high find the root cause of the flaky widget test
 ```
 
-The first preserves the session's knowledge before the context window fills, without interrupting the main agent to do it. The second is a cheap, isolated errand. The third auto-joins: its findings are delivered into the main conversation when it finishes.
+The first preserves the session's knowledge before the context window fills, without interrupting the main agent to do it. The second is a cheap, isolated errand. The third auto-squashes: its findings are delivered into the main conversation when it finishes.
 
 ### 2. Watch
 
@@ -64,7 +64,7 @@ A background agent is not fire-and-forget — it's a session you can talk to.
 
 Press `Enter` in the overlay to open the steer composer. Mid-turn, your message queues in after the current tool batch, before the next model call — exactly like steering the main agent. After the turn completes, the same composer starts **another turn** on the same live session. Follow up as many times as you need; every completed turn posts its own result card.
 
-`Ctrl+x` interrupts only the current turn — the agent goes idle and stays available for steering, joining, or detaching. In fact, nothing ends an agent except you: pressing `d` twice, joining it, or ending the Pi session.
+`Ctrl+x` interrupts only the current turn — the agent goes idle and stays available for steering, squashing, or detaching. In fact, nothing ends an agent except you: pressing `d` twice, squashing or rebasing it, or ending the Pi session.
 
 ### 4. Detach
 
@@ -76,28 +76,28 @@ Detached session 0199c4f2-8b1a-7c3d-9e05-6a2f18d7b4ce
 
 Pick it back up whenever you like — `/resume 0199c4f2`, or `pi -r` and choose it from the list. It resumes as an ordinary Pi session with its full history, its model, and its thinking level, and from there it is a normal agent you talk to directly.
 
-### 5. Join — or don't
+### 5. Squash — or don't
 
 This is what makes user agents different from subagents: **by default, the main agent never learns any of this happened.**
 
 Each completed turn posts a result card into your transcript — metadata, a collapsed preview, expandable to the full Markdown response. The card is TUI-only: you read it, expand it, copy it, and the main agent's context is untouched. Ask an agent ten questions and your main agent's token budget doesn't move.
 
-When a result does belong in the main conversation, join it:
+When a result does belong in the main conversation, squash it in:
 
-- Dispatch with `-j`/`--join` and the result is delivered automatically on completion.
-- Or press `j` in the overlay of any completed agent, whenever you decide it earned its place.
+- Dispatch with `-s`/`--squash` and the result is delivered automatically on completion.
+- Or press `s` in the overlay of any completed agent, whenever you decide it earned its place.
 
-Joining delivers a compact record, not a transcript dump: every message you sent the agent and the final answer to each — no thinking, no tool traffic. The record is rebuilt from the agent's full history at join time, so early turns survive even after the agent compacts its own context. If the main agent is mid-turn, the record is steered in; if idle, it triggers a turn. A joined agent retires; its overlay stays readable.
+A squash delivers a compact record, not a transcript dump: every message you sent the agent and the final answer to each — no thinking, no tool traffic. The record is rebuilt from the agent's full history at squash time, so early turns survive even after the agent compacts its own context. If the main agent is mid-turn, the record is steered in; if idle, it triggers a turn. A squashed agent retires; its overlay stays readable.
 
 ### 6. Or rebase — rewrite history
 
-Join has a raw sibling. Press `r` in the overlay and the agent's whole conversation — prompts, replies, tool calls and their results — is appended to the main session as ordinary messages, exactly as if you had prompted the main agent all along. The dispatch preamble is stripped, nothing is wrapped or summarized, and no trace remains that a background agent ever existed. The transcript reloads with the conversation inline, followed by one dim provenance line:
+Squash has a raw sibling. Press `r` in the overlay and the agent's whole conversation — prompts, replies, tool calls and their results — is appended to the main session as ordinary messages, exactly as if you had prompted the main agent all along. The dispatch preamble is stripped, nothing is wrapped or summarized, and no trace remains that a background agent ever existed. Everything else the agent lived through rides along untouched — and if it compacted its own context mid-run, the compaction rides along too, so the main conversation's context picks up exactly where the agent's left off. The transcript redraws with the conversation inline, followed by one dim provenance line:
 
 ```
-Rebased session 01a0534e-9fa7-7d6f-bd44-b85fba1f5e05 into this conversation
+Rebased session 01a0534e-9fa7-7d6f-bd44-b85fba1f5e05 into this conversation (added 32 messages, ~135K tokens, 1 compaction event)
 ```
 
-Rebase is a fast-forward, in the git sense: the child forked from the main conversation's tip, and its history can graft back only while that tip hasn't moved. Send the main agent anything after the dispatch and `r` disappears, leaving `j` — which always works — as the way in. Delivering the rebase reloads the session, so `r` is also withheld while any agent is mid-turn, and parked agents are detached first, each leaving its `Detached session …` line to `/resume` from.
+Rebase is a fast-forward, in the git sense: the child forked from the main conversation's tip, and its history can graft back only while that tip hasn't moved. Send the main agent anything after the dispatch and `r` disappears, leaving `s` — which always works — as the way in; press `r` anyway and the footer tells you why not, for a few seconds. Delivering the rebase switches the session in place — same file, same session id, transcript redrawn — so `r` is also withheld while any agent is mid-turn, and parked agents are detached first, each leaving its `Detached session …` line to `/resume` from.
 
 ## Per-agent configuration
 
@@ -124,7 +124,7 @@ Everything goes through one command: `/agent [options] <task>`.
 | Flag | Effect |
 |---|---|
 | `-i`, `--isolate` | Start without the conversation snapshot |
-| `-j`, `--join` | Deliver the result into the main context on completion |
+| `-s`, `--squash` | Deliver the result into the main context on completion |
 | `-m MODEL` | Model for this agent (alias of Pi's `--model`) |
 | *pi CLI options* | Forwarded to the agent — `--thinking`, `--tools`, `--system-prompt`, … |
 
@@ -136,7 +136,7 @@ Everything goes through one command: `/agent [options] <task>`.
 | Widget / overlay | `d` `d` | Detach the agent, keeping its session (twice to confirm) |
 | Widget / overlay | `Esc` | Back |
 | Overlay | `Enter` | Steer mid-turn, or start another turn when idle |
-| Overlay | `j` | Join the conversation into the main context |
+| Overlay | `s` | Squash the conversation into the main context |
 | Overlay | `r` | Rebase the raw conversation into the main context (fast-forward only) |
 | Overlay | `c` | Copy the latest response |
 | Overlay | scroll · `End` | Pause tail-following · resume it |
@@ -151,7 +151,7 @@ Everything goes through one command: `/agent [options] <task>`.
 
 ## Under the hood
 
-Design notes — result delivery through the Pi SDK, the joined-message format, runtime sharing, model resolution, and editor internals — live in [INTERNALS.md](INTERNALS.md). The complete command grammar lives in [PARSER_SPEC.md](PARSER_SPEC.md).
+Design notes — result delivery through the Pi SDK, the squashed-message format, runtime sharing, model resolution, and editor internals — live in [INTERNALS.md](INTERNALS.md). The complete command grammar lives in [PARSER_SPEC.md](PARSER_SPEC.md).
 
 ---
 

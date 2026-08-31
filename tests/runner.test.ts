@@ -10,6 +10,7 @@ import {
 	persistMessages,
 	resolveForwardedOptions,
 	runChildTurns,
+	subscribeToChildSession,
 	waitForInstruction,
 } from "../runner.ts";
 import type { AgentMessage, AgentResultMessage, RunningAgent } from "../shared.ts";
@@ -22,7 +23,7 @@ type RunningAgentForTest = Pick<
 
 const base = {
 	isolate: false,
-	context: false,
+	squash: false,
 	forwardedArgs: [] as string[],
 	warnings: [] as string[],
 };
@@ -101,15 +102,15 @@ describe("parseAgentCommand — extension options (§3a)", () => {
 		});
 	});
 
-	test("consumes -j / --join", () => {
-		expect(parseAgentCommand("-j do the thing", "agent")).toEqual({
+	test("consumes -s / --squash", () => {
+		expect(parseAgentCommand("-s do the thing", "agent")).toEqual({
 			...base,
-			context: true,
+			squash: true,
 			task: "do the thing",
 		});
-		expect(parseAgentCommand("--join do the thing", "agent")).toEqual({
+		expect(parseAgentCommand("--squash do the thing", "agent")).toEqual({
 			...base,
-			context: true,
+			squash: true,
 			task: "do the thing",
 		});
 	});
@@ -119,11 +120,11 @@ describe("parseAgentCommand — extension options (§3a)", () => {
 			...base,
 			forwardedArgs: ["--model", "gpt56t"],
 			isolate: true,
-			context: true,
+			squash: true,
 			task: "do the thing",
 		};
-		expect(parseAgentCommand("-j -i -m gpt56t do the thing", "agent")).toEqual(expected);
-		expect(parseAgentCommand("-m gpt56t -i --join do the thing", "agent")).toEqual(expected);
+		expect(parseAgentCommand("-s -i -m gpt56t do the thing", "agent")).toEqual(expected);
+		expect(parseAgentCommand("-m gpt56t -i --squash do the thing", "agent")).toEqual(expected);
 	});
 
 	test("the previous --context option is no longer recognized", () => {
@@ -593,7 +594,7 @@ describe("persistMessages — the child session file is resumable", () => {
 		const sessionDirectory = mkdtempSync(join(tmpdir(), "pi-user-agents-"));
 		try {
 			const sessionManager = SessionManager.create("/tmp/project", sessionDirectory);
-			persistMessages(sessionManager, messages);
+			persistMessages(sessionManager, messages, []);
 			const sessionFile = sessionManager.getSessionFile();
 			expect(sessionFile, "Expected the child session to have a file path").toBeString();
 			const reopened = SessionManager.open(sessionFile as string);
@@ -641,6 +642,104 @@ describe("persistMessages — the child session file is resumable", () => {
 			restored.entryTypes,
 			"Expected a result card the child inherited to be stored as pi's own custom_message entry",
 		).toEqual(["message", "message", "custom_message"]);
+	});
+
+	test("a mid-stream compaction with a kept tail rebuilds the exact compacted context", () => {
+		const replayed = [
+			{ role: "user", content: "first ask", timestamp: 1 },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "early work" }],
+				timestamp: 2,
+				stopReason: "stop",
+			},
+			{ role: "user", content: "second ask", timestamp: 3 },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "recent work" }],
+				timestamp: 4,
+				stopReason: "stop",
+			},
+			{
+				role: "compactionSummary",
+				summary: "everything before the kept tail",
+				tokensBefore: 50_000,
+				timestamp: 5,
+				keptTailCount: 2,
+			},
+			{ role: "user", content: "third ask", timestamp: 6 },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "final work" }],
+				timestamp: 7,
+				stopReason: "stop",
+			},
+		] as AgentMessage[];
+
+		const restored = roundTrip(replayed);
+
+		expect(
+			restored.entryTypes,
+			"Expected the full history persisted with the compaction as an ordinary entry",
+		).toEqual(["message", "message", "message", "message", "compaction", "message", "message"]);
+		expect(
+			restored.messages.map((message) => message.role),
+			"Expected the rebuilt context to keep the tail verbatim after the summary, like the child's live context",
+		).toEqual(["compactionSummary", "user", "assistant", "user", "assistant"]);
+		expect(restored.messages[1]).toMatchObject({ role: "user", content: "second ask" });
+		expect(restored.messages[3]).toMatchObject({ role: "user", content: "third ask" });
+	});
+
+	test("a kept tail that reaches back into the pre-replay context keeps those messages too", () => {
+		const sessionDirectory = mkdtempSync(join(tmpdir(), "pi-user-agents-"));
+		try {
+			const sessionManager = SessionManager.create("/tmp/project", sessionDirectory);
+			const priorContextEntryIds = [
+				sessionManager.appendMessage({ role: "user", content: "A ask", timestamp: 1 } as never),
+				sessionManager.appendMessage({
+					role: "assistant",
+					content: [{ type: "text", text: "B answer" }],
+					timestamp: 2,
+					stopReason: "stop",
+				} as never),
+				sessionManager.appendMessage({ role: "user", content: "C ask", timestamp: 3 } as never),
+			];
+
+			// The child inherited [A, B, C], produced D, compacted keeping the last 3, produced E.
+			persistMessages(
+				sessionManager,
+				[
+					{ role: "user", content: "D ask", timestamp: 4 },
+					{
+						role: "compactionSummary",
+						summary: "covers A only",
+						tokensBefore: 60_000,
+						timestamp: 5,
+						keptTailCount: 3,
+					},
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "E answer" }],
+						timestamp: 6,
+						stopReason: "stop",
+					},
+				] as AgentMessage[],
+				priorContextEntryIds,
+			);
+
+			const sessionFile = sessionManager.getSessionFile();
+			expect(sessionFile).toBeString();
+			const restored = SessionManager.open(sessionFile as string).buildSessionContext().messages;
+			expect(
+				restored.map((message) => message.role),
+				"Expected the kept tail to span pre-existing main messages, not only replayed ones",
+			).toEqual(["compactionSummary", "assistant", "user", "user", "assistant"]);
+			expect(restored[1]).toMatchObject({ role: "assistant" });
+			expect(restored[2]).toMatchObject({ role: "user", content: "C ask" });
+			expect(restored[3]).toMatchObject({ role: "user", content: "D ask" });
+		} finally {
+			rmSync(sessionDirectory, { recursive: true, force: true });
+		}
 	});
 
 	test("a snapshot taken after the main session compacted or branched keeps its summaries", () => {
@@ -740,7 +839,7 @@ describe("waitForInstruction — idle lifecycle parking", () => {
 });
 
 describe("runChildTurns — main-context delivery", () => {
-	test("an interrupted partial response stays separate, while its resumed response can join", async () => {
+	test("an interrupted partial response stays separate, while its resumed response can squash", async () => {
 		let resolvePrompt = () => undefined;
 		let promptCalls = 0;
 		const messages: Array<Record<string, unknown>> = [];
@@ -771,7 +870,7 @@ describe("runChildTurns — main-context delivery", () => {
 			invocation: "/agent plan the migration",
 			notifyMainAgent: true,
 			dispatchBaseFingerprint: "[]",
-			mainContextState: "will-join",
+			mainContextState: "will-squash",
 			status: "running",
 			startedAt: Date.now(),
 			turnStartedAt: Date.now(),
@@ -824,18 +923,18 @@ describe("runChildTurns — main-context delivery", () => {
 		expect(sentMessages).toEqual([]);
 
 		agent.resume?.("finish the analysis");
-		expect(agent.mainContextState).toBe("will-join");
+		expect(agent.mainContextState).toBe("will-squash");
 		await lifecycle;
 
 		expect(sentMessages).toHaveLength(1);
 		expect(completedMessages).toHaveLength(1);
 		expect(sentMessages[0]?.details).toMatchObject({
 			agentId: "user-1",
-			mainContextState: "will-join",
+			mainContextState: "will-squash",
 		});
 	});
 
-	test("shutdown suppression cancels a scheduled join", async () => {
+	test("shutdown suppression cancels a scheduled squash", async () => {
 		const messages = [
 			{
 				role: "assistant",
@@ -855,10 +954,10 @@ describe("runChildTurns — main-context delivery", () => {
 			model: "provider/model",
 			modelLabel: "model",
 			task: "plan the migration",
-			invocation: "/agent -j plan the migration",
+			invocation: "/agent -s plan the migration",
 			notifyMainAgent: true,
 			dispatchBaseFingerprint: "[]",
-			mainContextState: "will-join",
+			mainContextState: "will-squash",
 			status: "running",
 			startedAt: Date.now(),
 			turnStartedAt: Date.now(),
@@ -892,5 +991,81 @@ describe("runChildTurns — main-context delivery", () => {
 		expect(agent.mainContextState).toBe("separate");
 		expect(sentMessages).toEqual([]);
 		expect(completedMessages).toEqual([]);
+	});
+});
+
+describe("subscribeToChildSession — capturing a live child compaction", () => {
+	test("compaction_end lands in the append-only conversation, carrying the kept-tail count", () => {
+		let listener: ((event: unknown) => void) | undefined;
+		const session = {
+			isStreaming: false,
+			agent: {
+				state: {
+					messages: [
+						{ role: "compactionSummary", summary: "child summary", tokensBefore: 90_000 },
+						{ role: "user", content: "kept ask" },
+						{ role: "assistant", content: [{ type: "text", text: "kept answer" }] },
+					],
+				},
+			},
+			subscribe: (handler: (event: unknown) => void) => {
+				listener = handler;
+				return () => undefined;
+			},
+			getContextUsage: () => undefined,
+		} as unknown as NonNullable<RunningAgent["session"]>;
+		const agent = {
+			id: "user-1",
+			sessionId: "session-1",
+			command: "agent",
+			inheritedContext: true,
+			model: "provider/model",
+			modelLabel: "model",
+			task: "long task",
+			invocation: "/agent long task",
+			notifyMainAgent: false,
+			dispatchBaseFingerprint: "[]",
+			mainContextState: "separate",
+			status: "running",
+			startedAt: Date.now(),
+			turnStartedAt: Date.now(),
+			activeTools: new Map<string, string>(),
+			toolUses: 0,
+			turnCount: 0,
+			responseText: "",
+			conversationMessages: [],
+			session,
+			finished: Promise.resolve(),
+		} satisfies RunningAgent;
+
+		subscribeToChildSession(session, agent, { update: () => undefined } as never);
+		if (!listener) throw new Error("Child subscription was not installed");
+		listener({
+			type: "compaction_end",
+			reason: "threshold",
+			aborted: false,
+			willRetry: false,
+			result: { summary: "child summary", firstKeptEntryId: "child-e7", tokensBefore: 90_000 },
+		});
+
+		expect(agent.conversationMessages).toHaveLength(1);
+		expect(agent.conversationMessages[0]).toMatchObject({
+			role: "compactionSummary",
+			summary: "child summary",
+			tokensBefore: 90_000,
+			keptTailCount: 2,
+		});
+
+		listener({
+			type: "compaction_end",
+			reason: "manual",
+			aborted: true,
+			willRetry: false,
+			result: undefined,
+		});
+		expect(
+			agent.conversationMessages,
+			"Expected an aborted compaction to leave no trace in the conversation",
+		).toHaveLength(1);
 	});
 });

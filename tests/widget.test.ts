@@ -124,10 +124,10 @@ describe("UserAgentWidget context meter", () => {
 });
 
 describe("UserAgentWidget main-context state", () => {
-	test("renders a scheduled join while the response is in flight", () => {
-		const header = renderRunningHeader(undefined, { mainContextState: "will-join" });
+	test("renders a scheduled squash while the response is in flight", () => {
+		const header = renderRunningHeader(undefined, { mainContextState: "will-squash" });
 
-		expect(header).toContain("will join context");
+		expect(header).toContain("will squash into context");
 	});
 });
 
@@ -339,10 +339,10 @@ describe("UserAgentWidget steering", () => {
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
-		const joinedResults: AgentResultMessage[] = [];
+		const squashedResults: AgentResultMessage[] = [];
 		const widget = new UserAgentWidget(
 			new Set([runningAgent]),
-			(message) => joinedResults.push(message),
+			(message) => squashedResults.push(message),
 			() => undefined,
 			noRebase,
 		);
@@ -386,10 +386,10 @@ describe("UserAgentWidget steering", () => {
 		if (!viewer) throw new Error("Agent viewer did not open");
 
 		expect(viewer.render(80).join("\n")).toContain("message 11");
-		expect(viewer.render(80).join("\n")).not.toContain("j join");
-		viewer.handleInput?.("j");
+		expect(viewer.render(80).join("\n")).not.toContain("s squash");
+		viewer.handleInput?.("s");
 		expect(runningAgent.notifyMainAgent).toBe(false);
-		expect(joinedResults).toEqual([]);
+		expect(squashedResults).toEqual([]);
 
 		viewer.handleInput?.("\x1b[H");
 		expect(viewer.render(80).join("\n")).toContain("message 0");
@@ -442,15 +442,15 @@ describe("UserAgentWidget completed overlay", () => {
 				ok: true,
 			},
 		};
-		const joinedResults: AgentResultMessage[] = [];
+		const squashedResults: AgentResultMessage[] = [];
 		const detachedSessionIds: string[] = [];
 		const widget = new UserAgentWidget(
 			new Set(),
-			(message) => joinedResults.push(message),
+			(message) => squashedResults.push(message),
 			(sessionId) => detachedSessionIds.push(sessionId),
 			noRebase,
 		);
-		widget.addCompleted(completedAgent, resultMessage, { joinable: true });
+		widget.addCompleted(completedAgent, resultMessage, { squashable: true });
 		const theme = {
 			fg: (_color: string, text: string) => text,
 			bold: (text: string) => text,
@@ -495,10 +495,10 @@ describe("UserAgentWidget completed overlay", () => {
 		if (!viewer || !widgetComponent) throw new Error("Completed agent viewer did not open");
 
 		expect(viewer.render(100).join("\n")).toContain("d detach");
-		expect(viewer.render(100).join("\n")).toContain("j join");
-		viewer.handleInput?.("j");
-		expect(joinedResults).toEqual([resultMessage]);
-		expect(viewer.render(100).join("\n")).not.toContain("j join");
+		expect(viewer.render(100).join("\n")).toContain("s squash");
+		viewer.handleInput?.("s");
+		expect(squashedResults).toEqual([resultMessage]);
+		expect(viewer.render(100).join("\n")).not.toContain("s squash");
 		viewer.handleInput?.("\x1b");
 		await Promise.resolve();
 		expect(widgetComponent.render(100).join("\n")).toContain("/agent");
@@ -526,7 +526,7 @@ type IdleHarness = {
 	viewer: () => Component;
 	openViewer: () => void;
 	sendWidgetKey: (data: string) => void;
-	joinedResults: AgentResultMessage[];
+	squashedResults: AgentResultMessage[];
 	detachedSessionIds: string[];
 	steeredMessages: string[];
 	resumedInstructions: string[];
@@ -561,7 +561,7 @@ function buildIdleHarness(
 	} as unknown as NonNullable<RunningAgent["session"]>;
 	const resumedInstructions: string[] = [];
 	let retired = 0;
-	const pendingJoinMessage: AgentResultMessage = {
+	const pendingSquashMessage: AgentResultMessage = {
 		customType: "pi-user-agents",
 		content: "<user_agent>fine how are you?</user_agent>",
 		display: false,
@@ -596,7 +596,7 @@ function buildIdleHarness(
 		responseText: "fine how are you?",
 		conversationMessages: messages,
 		session,
-		pendingJoinMessage,
+		pendingSquashMessage,
 		resume: (instruction: string) => {
 			resumedInstructions.push(instruction);
 		},
@@ -605,11 +605,11 @@ function buildIdleHarness(
 		},
 		finished: Promise.resolve(),
 	} satisfies RunningAgent;
-	const joinedResults: AgentResultMessage[] = [];
+	const squashedResults: AgentResultMessage[] = [];
 	const detachedSessionIds: string[] = [];
 	const widget = new UserAgentWidget(
 		new Set([agent, ...extraAgents]),
-		(message) => joinedResults.push(message),
+		(message) => squashedResults.push(message),
 		(sessionId) => detachedSessionIds.push(sessionId),
 		rebaseDelivery,
 	);
@@ -676,7 +676,7 @@ function buildIdleHarness(
 		sendWidgetKey: (data: string) => {
 			terminalInput(data);
 		},
-		joinedResults,
+		squashedResults,
 		detachedSessionIds,
 		steeredMessages,
 		resumedInstructions,
@@ -712,7 +712,7 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		expect(rendered).not.toContain("completed");
 		expect(rendered).toContain("3.0s");
 		expect(rendered).not.toContain("1m");
-		expect(rendered).not.toContain("join context");
+		expect(rendered).not.toContain("into context");
 	});
 
 	test("reuses the live context meter as overlay metadata", () => {
@@ -754,29 +754,29 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		expect(harness.steeredMessages).toEqual([]);
 	});
 
-	test("j joins the latest turn result, snapshots the agent, and retires the live session", () => {
+	test("s squashes the latest turn result, snapshots the agent, and retires the live session", () => {
 		const harness = buildIdleHarness();
 		harness.openViewer();
 		const viewer = harness.viewer();
 
-		expect(viewer.render(100).join("\n")).toContain("j join");
-		viewer.handleInput?.("j");
+		expect(viewer.render(100).join("\n")).toContain("s squash");
+		viewer.handleInput?.("s");
 
-		expect(harness.joinedResults.map((message) => message.content)).toEqual([
+		expect(harness.squashedResults.map((message) => message.content)).toEqual([
 			"<user_agent>fine how are you?</user_agent>",
 		]);
-		expect(harness.agent.pendingJoinMessage).toBeUndefined();
+		expect(harness.agent.pendingSquashMessage).toBeUndefined();
 		expect(harness.agent.status).toBe("posted");
 		expect(harness.retireCalls()).toBe(1);
-		expect(viewer.render(100).join("\n")).not.toContain("j join");
-		expect(viewer.render(100).join("\n")).toContain("will join context");
+		expect(viewer.render(100).join("\n")).not.toContain("s squash");
+		expect(viewer.render(100).join("\n")).toContain("will squash into context");
 		let snapshotRow = harness.widgetComponent().render(120).join("\n");
-		expect(snapshotRow).toContain("will join context");
+		expect(snapshotRow).toContain("will squash into context");
 
-		expect(harness.widget.confirmMainContextJoin(harness.agent.id)).toBe(true);
-		expect(viewer.render(100).join("\n")).toContain("joined context");
+		expect(harness.widget.confirmMainContextSquash(harness.agent.id)).toBe(true);
+		expect(viewer.render(100).join("\n")).toContain("squashed messages into context");
 		snapshotRow = harness.widgetComponent().render(120).join("\n");
-		expect(snapshotRow).toContain("joined context");
+		expect(snapshotRow).toContain("squashed messages into context");
 		expect(snapshotRow).toContain("/agent");
 		expect(snapshotRow).toContain("3.0s");
 		expect(snapshotRow).not.toContain("1m");
@@ -849,15 +849,15 @@ describe("UserAgentWidget rebase", () => {
 				firstContent: "hello how are you?",
 			},
 		]);
-		expect(harness.joinedResults, "Expected rebase to bypass the join channel").toEqual([]);
-		expect(harness.agent.pendingJoinMessage).toBeUndefined();
+		expect(harness.squashedResults, "Expected rebase to bypass the squash channel").toEqual([]);
+		expect(harness.agent.pendingSquashMessage).toBeUndefined();
 		expect(harness.agent.status).toBe("posted");
 		expect(harness.agent.mainContextState).toBe("rebased");
 		expect(harness.retireCalls()).toBe(1);
 		expect(harness.widgetComponent().render(120).join("\n")).toContain("rebased into context");
 	});
 
-	test("r is withheld while the main session has drifted, leaving join available", () => {
+	test("r is withheld while the main session has drifted, leaving squash available", () => {
 		const delivered: unknown[] = [];
 		const harness = buildIdleHarness(undefined, {
 			canDeliver: () => false,
@@ -867,11 +867,11 @@ describe("UserAgentWidget rebase", () => {
 		const viewer = harness.viewer();
 
 		expect(viewer.render(100).join("\n")).not.toContain("r rebase");
-		expect(viewer.render(100).join("\n")).toContain("j join");
+		expect(viewer.render(100).join("\n")).toContain("s squash");
 		viewer.handleInput?.("r");
 
 		expect(delivered).toEqual([]);
-		expect(harness.agent.pendingJoinMessage).toBeDefined();
+		expect(harness.agent.pendingSquashMessage).toBeDefined();
 		expect(harness.agent.status).toBe("idle");
 	});
 });
@@ -954,5 +954,49 @@ describe("UserAgentWidget rebase alongside other agents", () => {
 		expect(parked.aborted).toBe(true);
 		expect(retirements).toEqual(["user-2"]);
 		expect(harness.agent.mainContextState).toBe("rebased");
+	});
+});
+
+describe("UserAgentWidget rebase refusal warning", () => {
+	test("r on a drifted main session shows a transient warning instead of doing nothing", () => {
+		const delivered: unknown[] = [];
+		const harness = buildIdleHarness(undefined, {
+			canDeliver: () => false,
+			deliver: (...args) => delivered.push(args),
+		});
+		harness.openViewer();
+		const viewer = harness.viewer();
+
+		viewer.handleInput?.("r");
+
+		expect(delivered).toEqual([]);
+		expect(viewer.render(100).join("\n")).toContain(
+			"Can't rebase: the main session has drifted since dispatch",
+		);
+	});
+
+	test("r while a sibling is mid-turn names the sibling as the reason", () => {
+		const harness = buildIdleHarness(
+			undefined,
+			{ canDeliver: () => true, deliver: () => undefined },
+			[secondaryAgent(2, "running", [])],
+		);
+		harness.openViewer();
+		const viewer = harness.viewer();
+
+		viewer.handleInput?.("r");
+
+		expect(viewer.render(100).join("\n")).toContain("Can't rebase: another agent is mid-turn");
+	});
+
+	test("r with nothing deliverable stays silent", () => {
+		const harness = buildIdleHarness(undefined, { canDeliver: () => true, deliver: () => undefined });
+		harness.agent.pendingSquashMessage = undefined;
+		harness.openViewer();
+		const viewer = harness.viewer();
+
+		viewer.handleInput?.("r");
+
+		expect(viewer.render(100).join("\n")).not.toContain("Can't rebase");
 	});
 });

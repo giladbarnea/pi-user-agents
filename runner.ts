@@ -5,12 +5,14 @@ import {
 	type AgentSessionServices,
 	type Args,
 	buildSessionContext,
+	estimateTokens,
 	createAgentSessionFromServices,
 	createAgentSessionServices,
 	getAgentDir,
 	type ModelRuntime,
 	parseArgs,
 	resolveCliModel,
+	sessionEntryToContextMessages,
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -21,6 +23,7 @@ import type {
 	AgentMessage,
 	AgentResultMessage,
 	AgentSession,
+	ChildCompactionMessage,
 	ExtensionAPI,
 	ExtensionCommandContext,
 	Model,
@@ -167,9 +170,9 @@ function createRunningAgent(
 		modelLabel: formatModelLabel(model),
 		task: parsed.task,
 		invocation,
-		notifyMainAgent: parsed.context,
+		notifyMainAgent: parsed.squash,
 		dispatchBaseFingerprint,
-		mainContextState: parsed.context ? "will-join" : "separate",
+		mainContextState: parsed.squash ? "will-squash" : "separate",
 		status: "starting",
 		startedAt: Date.now(),
 		turnStartedAt: Date.now(),
@@ -203,8 +206,8 @@ function postUserAgentResult(
  * The rebase mechanism: fast-forward a child conversation onto the session that dispatched it.
  *
  * Delivery appends the messages to the main session file, drops a persisted breadcrumb naming
- * the child session, and asks the host to reload the session from its own file — the one path
- * that rebuilds both the live LLM context and the TUI transcript (see INTERNALS.md).
+ * the child session, and asks the host to switch to that same file — the one path that rebuilds
+ * both the live LLM context and the TUI transcript (see INTERNALS.md).
  */
 export function createRebaseDelivery(
 	pi: ExtensionAPI,
@@ -223,17 +226,36 @@ export function createRebaseDelivery(
 			if (!ctx) throw new Error("No dispatching session context to rebase onto");
 			// The runtime object behind the extension's readonly facade is the writable SessionManager.
 			const sessionManager = ctx.sessionManager as unknown as SessionManager;
-			persistMessages(sessionManager, messages);
-			pi.appendEntry<RebasedEntryData>(REBASED_ENTRY_TYPE, { sessionId: agent.sessionId });
+			// A replayed compaction's kept tail may reach back into main's existing context.
+			const priorContextEntryIds = sessionManager
+				.buildContextEntries()
+				.flatMap((entry) => sessionEntryToContextMessages(entry).map(() => entry.id));
+			persistMessages(sessionManager, messages, priorContextEntryIds);
+			pi.appendEntry<RebasedEntryData>(REBASED_ENTRY_TYPE, {
+				sessionId: agent.sessionId,
+				stats: {
+					messageCount: messages.length,
+					tokenEstimate: messages.reduce((total, message) => total + estimateTokens(message), 0),
+					compactionCount: messages.filter((message) => message.role === "compactionSummary")
+						.length,
+				},
+			});
 			const sessionFile = sessionManager.getSessionFile();
-			if (!sessionFile) throw new Error("The main session has no file to reload from");
+			if (!sessionFile) throw new Error("The main session has no file to switch to");
 			void ctx.switchSession(sessionFile).then(
 				(result) => {
 					if (result.cancelled && ctx.hasUI)
-						ctx.ui.notify("Rebase reload was cancelled; run /reload to sync the transcript", "warning");
+						ctx.ui.notify(
+							"The rebase is saved to the session file, but the session switch was cancelled — /resume this session to see it",
+							"warning",
+						);
 				},
 				(error) => {
-					if (ctx.hasUI) ctx.ui.notify(`Rebase reload failed: ${errorMessage(error)}`, "error");
+					if (ctx.hasUI)
+						ctx.ui.notify(
+							`The rebase is saved to the session file, but the session switch failed (${errorMessage(error)}) — /resume this session to see it`,
+							"error",
+						);
 				},
 			);
 		},
@@ -447,7 +469,7 @@ async function runAgentLifecycle(
 			{ ok: false, error: message },
 			{ display: runningAgent.notifyMainAgent },
 		);
-		widget.addCompleted(runningAgent, resultMessage, { joinable: !runningAgent.notifyMainAgent });
+		widget.addCompleted(runningAgent, resultMessage, { squashable: !runningAgent.notifyMainAgent });
 		if (postUserAgentResult(pi, isShuttingDown, runningAgent.notifyMainAgent, resultMessage))
 			runningAgent.status = "posted";
 	} finally {
@@ -491,7 +513,7 @@ export async function runChildTurns(
 				{ display: false },
 			);
 			postUserAgentResult(pi, isShuttingDown, false, resultMessage);
-			runningAgent.pendingJoinMessage = runningAgent.notifyMainAgent
+			runningAgent.pendingSquashMessage = runningAgent.notifyMainAgent
 				? undefined
 				: resultMessage;
 			if (isShuttingDown()) return;
@@ -523,13 +545,13 @@ export async function runChildTurns(
 				resultMessage.details.mainContextState = "separate";
 				return;
 			}
-			widget.addCompleted(runningAgent, resultMessage, { joinable: false });
+			widget.addCompleted(runningAgent, resultMessage, { squashable: false });
 			const posted = postUserAgentResult(pi, isShuttingDown, true, resultMessage);
 			runningAgent.status = posted ? "posted" : runningAgent.status;
 			return;
 		}
 		postUserAgentResult(pi, isShuttingDown, false, resultMessage);
-		runningAgent.pendingJoinMessage = resultMessage;
+		runningAgent.pendingSquashMessage = resultMessage;
 		if (isShuttingDown()) return;
 		runningAgent.status = "idle";
 		logSteering(runningAgent.id, "agent-idle", { turnCount: runningAgent.turnCount });
@@ -581,7 +603,7 @@ async function createChildSession(
 	await session.bindExtensions({ mode: "print" });
 	logSteering(runningAgent.id, "session-bound", { streaming: session.isStreaming });
 	if (inheritedMessages.length > 0) {
-		persistMessages(childSessionManager, inheritedMessages);
+		persistMessages(childSessionManager, inheritedMessages, []);
 		session.agent.state.messages = inheritedMessages;
 		logSteering(runningAgent.id, "context-inherited", { messageCount: inheritedMessages.length });
 	}
@@ -589,27 +611,42 @@ async function createChildSession(
 }
 
 /**
- * Mirror the inherited snapshot into the child's session file so a resumed child sees the
- * same conversation the live one saw. Each role goes through its own append method: the
- * snapshot is already compaction-resolved, so its summary leads the child's own branch.
+ * Mirror a message stream into a session file, each role through its own append method.
+ * Seeds a child with its inherited snapshot (leading summary), and replays a rebase onto the
+ * main session. A compaction with a keptTailCount maps its kept-tail boundary onto this file's
+ * own entry ids, so the rebuilt context keeps the same messages verbatim the child kept — the
+ * tail may reach back into the pre-replay context, whose per-message ids arrive as
+ * priorContextEntryIds (empty when seeding a child).
  */
 export function persistMessages(
 	sessionManager: SessionManager,
 	messages: readonly AgentMessage[],
+	priorContextEntryIds: readonly string[],
 ): void {
+	// One id per context message, prior context first; every appended entry projects to one message.
+	const entryIdsPerMessage: string[] = [...priorContextEntryIds];
 	for (const message of messages) {
-		if (message.role === "compactionSummary")
-			sessionManager.appendCompaction(message.summary, "", message.tokensBefore);
-		else if (message.role === "branchSummary")
-			sessionManager.branchWithSummary(sessionManager.getLeafId(), message.summary);
-		else if (message.role === "custom")
-			sessionManager.appendCustomMessageEntry(
-				message.customType,
-				message.content,
-				message.display,
-				message.details,
+		if (message.role === "compactionSummary") {
+			const keptTailCount = (message as ChildCompactionMessage).keptTailCount ?? 0;
+			const firstKeptEntryId =
+				keptTailCount > 0 ? (entryIdsPerMessage[entryIdsPerMessage.length - keptTailCount] ?? "") : "";
+			entryIdsPerMessage.push(
+				sessionManager.appendCompaction(message.summary, firstKeptEntryId, message.tokensBefore),
 			);
-		else sessionManager.appendMessage(message);
+		} else if (message.role === "branchSummary")
+			entryIdsPerMessage.push(
+				sessionManager.branchWithSummary(sessionManager.getLeafId(), message.summary),
+			);
+		else if (message.role === "custom")
+			entryIdsPerMessage.push(
+				sessionManager.appendCustomMessageEntry(
+					message.customType,
+					message.content,
+					message.display,
+					message.details,
+				),
+			);
+		else entryIdsPerMessage.push(sessionManager.appendMessage(message));
 	}
 }
 
@@ -626,7 +663,7 @@ export function waitForInstruction(
 		};
 		agent.resume = (instruction) => {
 			logSteering(agent.id, "agent-resumed", { instructionLength: instruction.length });
-			agent.mainContextState = agent.notifyMainAgent ? "will-join" : "separate";
+			agent.mainContextState = agent.notifyMainAgent ? "will-squash" : "separate";
 			agent.status = "running";
 			agent.turnStartedAt = Date.now();
 			agent.completedAt = undefined;
@@ -640,12 +677,26 @@ export function waitForInstruction(
 	});
 }
 
-function subscribeToChildSession(
+export function subscribeToChildSession(
 	session: AgentSession,
 	runningAgent: RunningAgent,
 	widget: UserAgentWidget,
 ): () => void {
 	return session.subscribe((event: AgentSessionEvent) => {
+		if (event.type === "compaction_end" && !event.aborted && event.result) {
+			// Compaction never emits message events; capture it here or the rebase stream misses it.
+			// At this instant the live context is exactly [summary, kept tail], so the tail is countable.
+			const keptTailCount = Math.max(0, session.agent.state.messages.length - 1);
+			const compactionMessage: ChildCompactionMessage = {
+				role: "compactionSummary",
+				summary: event.result.summary,
+				tokensBefore: event.result.tokensBefore,
+				timestamp: Date.now(),
+				keptTailCount,
+			};
+			runningAgent.conversationMessages.push(compactionMessage);
+			logSteering(runningAgent.id, "child-compacted", { keptTailCount });
+		}
 		if (event.type === "agent_start")
 			logSteering(runningAgent.id, "child-agent-started", { streaming: session.isStreaming });
 		if (event.type === "agent_end")

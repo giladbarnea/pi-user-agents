@@ -150,6 +150,8 @@ export class AgentViewer implements Component {
 	private lastWidth = 0;
 	private justCopied = false;
 	private confirmingDetach = false;
+	private rebaseWarning: string | undefined;
+	private rebaseWarningTimer: ReturnType<typeof setTimeout> | undefined;
 	private composer: Input | undefined;
 	/** Rich tool rendering is far too costly to repeat on every 100 ms widget tick. */
 	private renderedContent: { key: string; lines: string[] } | undefined;
@@ -159,10 +161,11 @@ export class AgentViewer implements Component {
 		private readonly agent: ViewableAgent,
 		private readonly theme: Theme,
 		private readonly done: (result: AgentViewerAction) => void,
-		private readonly canJoinMainContext: () => boolean,
-		private readonly joinMainContext: () => void,
+		private readonly canSquashMainContext: () => boolean,
+		private readonly squashMainContext: () => void,
 		private readonly canRebaseMainContext: () => boolean,
 		private readonly rebaseMainContext: () => void,
+		private readonly rebaseBlockReason: () => string | undefined,
 		private readonly interrupt: () => void,
 	) {}
 
@@ -196,16 +199,23 @@ export class AgentViewer implements Component {
 			this.copyResponse();
 			return;
 		}
-		if (matchesKey(data, "j") && this.canJoinMainContext()) {
-			this.joinMainContext();
+		if (matchesKey(data, "s") && this.canSquashMainContext()) {
+			this.squashMainContext();
 			this.tui.requestRender();
 			return;
 		}
-		if (matchesKey(data, "r") && this.canRebaseMainContext()) {
-			// Close the overlay: the payoff is the rebased conversation now sitting in the main transcript.
-			this.rebaseMainContext();
-			this.done("hide");
-			return;
+		if (matchesKey(data, "r")) {
+			if (this.canRebaseMainContext()) {
+				// Close the overlay: the payoff is the rebased conversation now sitting in the main transcript.
+				this.rebaseMainContext();
+				this.done("hide");
+				return;
+			}
+			const reason = this.rebaseBlockReason();
+			if (reason) {
+				this.showRebaseWarning(`Can't rebase: ${reason}`);
+				return;
+			}
 		}
 		const viewport = this.viewportHeight();
 		const maxScroll = Math.max(
@@ -214,7 +224,7 @@ export class AgentViewer implements Component {
 		);
 		if (matchesKey(data, "up") || matchesKey(data, "k"))
 			this.scrollOffset = Math.max(0, this.scrollOffset - 1);
-		else if (matchesKey(data, "down"))
+		else if (matchesKey(data, "down") || matchesKey(data, "j"))
 			this.scrollOffset = Math.min(maxScroll, this.scrollOffset + 1);
 		else if (matchesKey(data, "pageUp") || matchesKey(data, "shift+up"))
 			this.scrollOffset = Math.max(0, this.scrollOffset - viewport);
@@ -298,6 +308,8 @@ export class AgentViewer implements Component {
 						composeHint,
 				),
 			);
+		} else if (this.rebaseWarning) {
+			lines.push(row(th.fg("warning", `⚠ ${this.rebaseWarning}`)));
 		} else {
 			const scrollPct =
 				content.length <= viewport
@@ -314,7 +326,7 @@ export class AgentViewer implements Component {
 					this.justCopied ? th.fg("success", "✓ copied") : th.fg("dim", "c copy"),
 					th.fg("dim", "↑↓ scroll"),
 					th.fg("dim", "PgUp/PgDn"),
-					this.canJoinMainContext() ? th.fg("dim", "j join") : "",
+					this.canSquashMainContext() ? th.fg("dim", "s squash") : "",
 					this.canRebaseMainContext() ? th.fg("dim", "r rebase") : "",
 					isLiveAgent(this.agent) ? th.fg("dim", "Ctrl+x interrupt") : "",
 					mainContext ? th.fg("dim", mainContext) : "",
@@ -334,6 +346,17 @@ export class AgentViewer implements Component {
 	invalidate(): void {}
 
 	dispose(): void {}
+
+	/** Surface why r did nothing, in the footer, for a few seconds. Memory-only, like `✓ copied`. */
+	private showRebaseWarning(warning: string): void {
+		this.rebaseWarning = warning;
+		if (this.rebaseWarningTimer) clearTimeout(this.rebaseWarningTimer);
+		this.rebaseWarningTimer = setTimeout(() => {
+			this.rebaseWarning = undefined;
+			this.tui.requestRender();
+		}, 4000);
+		this.tui.requestRender();
+	}
 
 	private requestDetach(): void {
 		if (this.confirmingDetach) {

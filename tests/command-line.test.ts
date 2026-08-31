@@ -13,7 +13,7 @@ describe("theme option policy", () => {
 			parseAgentCommand("--no-themes do it", "agent"),
 			{
 				isolate: false,
-				context: false,
+				squash: false,
 				forwardedArgs: ["--no-themes"],
 				task: "do it",
 				warnings: [],
@@ -28,7 +28,7 @@ describe("theme option policy", () => {
 			parsed,
 			{
 				isolate: false,
-				context: false,
+				squash: false,
 				forwardedArgs: [],
 				task: "do it --theme ./theme.json",
 				warnings: [

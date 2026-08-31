@@ -2,3 +2,4 @@
 - [ ] "Send to main agent" button ("Join main context")
 - [ ] Place "use up/down" text alongside the wodget's title (same row) 
 - [x] Syntax highlighting to distinguish args, args values, prompt, and error color on blocked or badly placed args
+- [ ] The overlay does not render a child's compaction (the captured compactionSummary message has no case in the viewer's messageLines)

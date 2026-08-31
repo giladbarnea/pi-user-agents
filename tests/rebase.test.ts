@@ -17,7 +17,7 @@ import type {
 } from "../shared.ts";
 
 describe("selectRebaseMessages — the child conversation, as if it happened in the main session", () => {
-	test("drops custom messages and child-internal summaries, keeping the raw conversation", () => {
+	test("drops only this extension's own custom messages; everything else the child saw passes through", () => {
 		const messages = [
 			{ role: "user", content: "prefixed task", timestamp: 1 },
 			{
@@ -41,12 +41,19 @@ describe("selectRebaseMessages — the child conversation, as if it happened in 
 				display: false,
 				timestamp: 4,
 			},
-			{ role: "compactionSummary", summary: "child compacted", tokensBefore: 90_000, timestamp: 5 },
-			{ role: "branchSummary", summary: "a path abandoned", fromId: "e7", timestamp: 6 },
+			{
+				role: "custom",
+				customType: "another-extension",
+				content: "a status message the child acted on",
+				display: true,
+				timestamp: 5,
+			},
+			{ role: "compactionSummary", summary: "child compacted", tokensBefore: 90_000, timestamp: 6 },
+			{ role: "branchSummary", summary: "a path abandoned", fromId: "e7", timestamp: 7 },
 			{
 				role: "assistant",
 				content: [{ type: "text", text: "final answer" }],
-				timestamp: 7,
+				timestamp: 8,
 				stopReason: "stop",
 			},
 		] as AgentMessage[];
@@ -55,10 +62,18 @@ describe("selectRebaseMessages — the child conversation, as if it happened in 
 
 		expect(
 			selected.map((message) => message.role),
-			"Expected only raw conversation roles, in order, with no user-agents-world traces",
-		).toEqual(["user", "assistant", "toolResult", "assistant"]);
-		expect(selected[1]).toBe(messages[1] as AgentMessage);
-		expect(selected[2]).toBe(messages[2] as AgentMessage);
+			"Expected the child's history verbatim, minus only this extension's own machinery",
+		).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"custom",
+			"compactionSummary",
+			"branchSummary",
+			"assistant",
+		]);
+		expect(selected[3]).toMatchObject({ customType: "another-extension" });
+		expect(selected[4]).toBe(messages[5] as AgentMessage);
 	});
 
 	test("replaces the first user message's prefixed instruction with the plain task", () => {
@@ -193,6 +208,61 @@ describe("createRebaseDelivery — fast-forward onto the dispatching session", (
 		expect(delivery.canDeliver(agentWithBase("[]"))).toBe(false);
 	});
 
+	test("a rebased child compaction becomes main's context boundary: full transcript, compacted LLM context", () => {
+		const { sessionManager, sessionDirectory } = seedMainSession();
+		try {
+			const ctx = {
+				sessionManager,
+				hasUI: false,
+				switchSession: async () => ({ cancelled: false }),
+			} as unknown as ExtensionCommandContext;
+			const delivery = createRebaseDelivery(
+				{ appendEntry: () => undefined } as unknown as ExtensionAPI,
+				() => ctx,
+			);
+			const agent = agentWithBase(mainContextFingerprint(sessionManager));
+
+			delivery.deliver(agent, [
+				{ role: "user", content: "the task", timestamp: 3 },
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "long early work" }],
+					timestamp: 4,
+					stopReason: "stop",
+				},
+				{
+					role: "compactionSummary",
+					summary: "the child's own compaction summary",
+					tokensBefore: 90_000,
+					timestamp: 5,
+				},
+				{ role: "user", content: "carry on", timestamp: 6 },
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "final answer" }],
+					timestamp: 7,
+					stopReason: "stop",
+				},
+			] as AgentMessage[]);
+
+			const reopened = SessionManager.open(sessionManager.getSessionFile() as string);
+			expect(
+				reopened.getEntries().map((entry) => entry.type),
+				"Expected the full history persisted, with the compaction as an ordinary entry",
+			).toEqual(["message", "message", "message", "message", "compaction", "message", "message"]);
+			const contextMessages = reopened.buildSessionContext().messages;
+			expect(
+				contextMessages.map((message) => message.role),
+				"Expected main's LLM context to pick up exactly where the child's compacted context left off",
+			).toEqual(["compactionSummary", "user", "assistant"]);
+			expect(contextMessages[0]).toMatchObject({
+				summary: "the child's own compaction summary",
+			});
+		} finally {
+			rmSync(sessionDirectory, { recursive: true, force: true });
+		}
+	});
+
 	test("deliver appends the conversation and breadcrumb, then reloads the session from its file", async () => {
 		const { sessionManager, sessionDirectory } = seedMainSession();
 		try {
@@ -234,9 +304,19 @@ describe("createRebaseDelivery — fast-forward onto the dispatching session", (
 				"Expected the child conversation appended after the original context",
 			).toEqual(["user", "assistant", "user", "assistant"]);
 			expect(reopened[2]).toMatchObject({ role: "user", content: "the task" });
-			expect(appendedEntries, "Expected a persisted rebase breadcrumb").toEqual([
-				{ customType: "pi-user-agents-rebased", data: { sessionId: "child-session-1" } },
-			]);
+			expect(appendedEntries, "Expected a persisted rebase breadcrumb").toHaveLength(1);
+			expect(appendedEntries[0]).toMatchObject({
+				customType: "pi-user-agents-rebased",
+				data: {
+					sessionId: "child-session-1",
+					stats: { messageCount: 2, compactionCount: 0 },
+				},
+			});
+			const stats = (appendedEntries[0]?.data as { stats: { tokenEstimate: number } }).stats;
+			expect(
+				stats.tokenEstimate,
+				"Expected a positive token estimate for the replayed messages",
+			).toBeGreaterThan(0);
 			expect(switchedTo, "Expected the host to reload the session from its own file").toEqual([
 				sessionFile,
 			]);

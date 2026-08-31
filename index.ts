@@ -31,7 +31,7 @@ export default function userAgent(pi: ExtensionAPI): void {
 	registerUserAgentRenderer(pi);
 	registerAgentAutocomplete(pi);
 
-	pi.on("message_end", (event) => confirmMainContextJoin(event, widget));
+	pi.on("message_end", (event) => confirmMainContextSquash(event, widget));
 
 	pi.registerCommand("agent", {
 		description:
@@ -68,19 +68,19 @@ export default function userAgent(pi: ExtensionAPI): void {
 	});
 }
 
-export function confirmMainContextJoin(
+export function confirmMainContextSquash(
 	event: MessageEndEvent,
 	widget: UserAgentWidget,
 ): MessageEndEventResult | undefined {
 	if (event.message.role !== "custom" || event.message.customType !== MESSAGE_TYPE) return;
 	const details = event.message.details as AgentCommandDetails | undefined;
-	if (!details?.agentId || details.mainContextState !== "will-join") return;
-	widget.confirmMainContextJoin(details.agentId);
-	details.mainContextState = "joined";
+	if (!details?.agentId || details.mainContextState !== "will-squash") return;
+	widget.confirmMainContextSquash(details.agentId);
+	details.mainContextState = "squashed";
 	return {
 		message: {
 			...event.message,
-			details: { ...details, mainContextState: "joined" },
+			details: { ...details, mainContextState: "squashed" },
 		},
 	};
 }
