@@ -295,6 +295,7 @@ export class UserAgentWidget {
 						() => this.canRebaseMainContext(agent.id),
 						() => this.rebaseMainContext(agent.id),
 						() => this.rebaseBlockReason(agent.id),
+						() => this.rebaseDetachCount(agent.id),
 						() => {
 							if (isRunningAgent(agent)) this.interruptRunning(agent);
 						},
@@ -370,6 +371,14 @@ export class UserAgentWidget {
 
 	private canRebaseMainContext(agentId: string): boolean {
 		return this.deliverableAgent(agentId) !== undefined && this.rebaseBlockReason(agentId) === undefined;
+	}
+
+	/** How many other agent sessions the rebase cascade would detach. */
+	private rebaseDetachCount(agentId: string): number {
+		return (
+			[...this.runningAgents].filter((agent) => agent.id !== agentId).length +
+			this.completedAgents.filter((agent) => agent.id !== agentId).length
+		);
 	}
 
 	/** Why a deliverable result cannot rebase right now; undefined when it can, or when nothing is deliverable. */

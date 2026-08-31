@@ -152,6 +152,8 @@ export class AgentViewer implements Component {
 	private confirmingDetach = false;
 	private rebaseWarning: string | undefined;
 	private rebaseWarningTimer: ReturnType<typeof setTimeout> | undefined;
+	/** True while the sibling-detach confirmation shows; the next r confirms the rebase. */
+	private confirmingRebase = false;
 	private composer: Input | undefined;
 	/** Rich tool rendering is far too costly to repeat on every 100 ms widget tick. */
 	private renderedContent: { key: string; lines: string[] } | undefined;
@@ -166,6 +168,7 @@ export class AgentViewer implements Component {
 		private readonly canRebaseMainContext: () => boolean,
 		private readonly rebaseMainContext: () => void,
 		private readonly rebaseBlockReason: () => string | undefined,
+		private readonly rebaseDetachCount: () => number,
 		private readonly interrupt: () => void,
 	) {}
 
@@ -187,6 +190,8 @@ export class AgentViewer implements Component {
 			return;
 		}
 		this.confirmingDetach = false;
+		const rebaseConfirmPending = this.confirmingRebase;
+		this.confirmingRebase = false;
 		if (matchesKey(data, "escape") || matchesKey(data, "q")) {
 			this.done("hide");
 			return;
@@ -206,6 +211,14 @@ export class AgentViewer implements Component {
 		}
 		if (matchesKey(data, "r")) {
 			if (this.canRebaseMainContext()) {
+				const detachCount = this.rebaseDetachCount();
+				if (detachCount > 0 && !rebaseConfirmPending) {
+					this.confirmingRebase = true;
+					this.showRebaseWarning(
+						`Rebase will detach ${detachCount} other agent session${detachCount === 1 ? "" : "s"}. r again to confirm`,
+					);
+					return;
+				}
 				// Close the overlay: the payoff is the rebased conversation now sitting in the main transcript.
 				this.rebaseMainContext();
 				this.done("hide");
@@ -353,12 +366,14 @@ export class AgentViewer implements Component {
 		if (this.rebaseWarningTimer) clearTimeout(this.rebaseWarningTimer);
 		this.rebaseWarningTimer = setTimeout(() => {
 			this.rebaseWarning = undefined;
+			this.confirmingRebase = false;
 			this.tui.requestRender();
 		}, 4000);
 		this.tui.requestRender();
 	}
 
 	private requestDetach(): void {
+		this.confirmingRebase = false;
 		if (this.confirmingDetach) {
 			this.done("detach");
 			return;

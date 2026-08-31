@@ -942,6 +942,22 @@ describe("UserAgentWidget rebase alongside other agents", () => {
 		const viewer = harness.viewer();
 
 		viewer.handleInput?.("r");
+		expect(
+			viewer.render(100).join("\n"),
+			"Expected a confirmation before detaching sibling sessions",
+		).toContain("Rebase will detach 1 other agent session. r again to confirm");
+		expect(delivered).toEqual([]);
+		expect(harness.detachedSessionIds).toEqual([]);
+
+		viewer.handleInput?.("\x1b[B");
+		viewer.handleInput?.("r");
+		expect(delivered, "Expected another key to cancel the pending confirmation").toEqual([]);
+		expect(
+			viewer.render(100).join("\n"),
+			"Expected the cancelled confirmation to be offered again",
+		).toContain("r again to confirm");
+
+		viewer.handleInput?.("r");
 		await harness.settleViewer();
 
 		expect(delivered, "Expected only the target agent's conversation to be delivered").toEqual([

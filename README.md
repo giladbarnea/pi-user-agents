@@ -97,7 +97,7 @@ Squash has a raw sibling. Press `r` in the overlay and the agent's whole convers
 Rebased session 01a0534e-9fa7-7d6f-bd44-b85fba1f5e05 into this conversation (added 32 messages, ~135K tokens, 1 compaction event)
 ```
 
-Rebase is a fast-forward, in the git sense: the child forked from the main conversation's tip, and its history can graft back only while that tip hasn't moved. Send the main agent anything after the dispatch and `r` disappears, leaving `s` — which always works — as the way in; press `r` anyway and the footer tells you why not, for a few seconds. Delivering the rebase switches the session in place — same file, same session id, transcript redrawn — so `r` is also withheld while any agent is mid-turn, and parked agents are detached first, each leaving its `Detached session …` line to `/resume` from.
+Rebase is a fast-forward, in the git sense: the child forked from the main conversation's tip, and its history can graft back only while that tip hasn't moved. Send the main agent anything after the dispatch and `r` disappears, leaving `s` — which always works — as the way in; press `r` anyway and the footer tells you why not, for a few seconds. Delivering the rebase switches the session in place — same file, same session id, transcript redrawn — so `r` is also withheld while any agent is mid-turn, and parked agents are detached first, each leaving its `Detached session …` line to `/resume` from. When siblings would be detached, the first `r` warns with the count and a second `r` confirms.
 
 ## Per-agent configuration
 
