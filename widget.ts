@@ -27,6 +27,7 @@ import type {
 import {
 	contextLabel,
 	formatMs,
+	TimedConfirmation,
 	formatToolUses,
 	formatTurns,
 	logSteering,
@@ -51,7 +52,8 @@ export class UserAgentWidget {
 	private active = false;
 	private selectedIndex = 0;
 	private viewerOpen = false;
-	private detachConfirmationTarget: ViewableAgent | undefined;
+	/** One confirmation slot for detaching the selected agent. */
+	private readonly detachConfirmation = new TimedConfirmation<ViewableAgent>(() => this.update());
 	private readonly completedAgents: CompletedAgent[] = [];
 
 	constructor(
@@ -67,7 +69,7 @@ export class UserAgentWidget {
 		this.ui = ui;
 		this.widgetRegistered = false;
 		this.tui = undefined;
-		this.detachConfirmationTarget = undefined;
+		this.detachConfirmation.cancel();
 		this.inputUnsub = ui.onTerminalInput((data) => this.handleKey(data));
 	}
 
@@ -146,7 +148,7 @@ export class UserAgentWidget {
 		this.widgetRegistered = false;
 		this.tui = undefined;
 		this.active = false;
-		this.detachConfirmationTarget = undefined;
+		this.detachConfirmation.cancel();
 	}
 
 	private clear(): void {
@@ -161,7 +163,7 @@ export class UserAgentWidget {
 		}
 		this.active = false;
 		this.selectedIndex = 0;
-		this.detachConfirmationTarget = undefined;
+		this.detachConfirmation.cancel();
 	}
 
 	private runningAgentsForWidget(): RunningAgent[] {
@@ -205,13 +207,13 @@ export class UserAgentWidget {
 		}
 
 		if (matchesKey(data, "down")) {
-			this.detachConfirmationTarget = undefined;
+			this.detachConfirmation.cancel();
 			this.selectedIndex = Math.min(entries.length - 1, this.selectedIndex + 1);
 			this.update();
 			return { consume: true };
 		}
 		if (matchesKey(data, "up")) {
-			this.detachConfirmationTarget = undefined;
+			this.detachConfirmation.cancel();
 			if (this.selectedIndex === 0) {
 				this.deactivate();
 				return { consume: true };
@@ -231,12 +233,12 @@ export class UserAgentWidget {
 			selected?.kind === "running" &&
 			isLiveAgent(selected.agent)
 		) {
-			this.detachConfirmationTarget = undefined;
+			this.detachConfirmation.cancel();
 			this.interruptRunning(selected.agent);
 			return { consume: true };
 		}
 		if (matchesKey(data, "enter")) {
-			this.detachConfirmationTarget = undefined;
+			this.detachConfirmation.cancel();
 			if (selected) this.openSelected(selected.agent);
 			return { consume: true };
 		}
@@ -252,19 +254,15 @@ export class UserAgentWidget {
 	}
 
 	private confirmDetach(target: ViewableAgent): boolean {
-		if (this.detachConfirmationTarget === target) {
-			this.detachConfirmationTarget = undefined;
-			return true;
-		}
-		this.detachConfirmationTarget = target;
-		this.update();
-		return false;
+		const confirmed = this.detachConfirmation.press(target);
+		if (!confirmed) this.update();
+		return confirmed;
 	}
 
 	private deactivate(): void {
 		this.active = false;
 		this.selectedIndex = 0;
-		this.detachConfirmationTarget = undefined;
+		this.detachConfirmation.cancel();
 		this.update();
 	}
 
@@ -479,7 +477,8 @@ export class UserAgentWidget {
 			lines.push(truncateToWidth(`  ${theme.fg("dim", "←/↓ select agent")}`, width));
 		} else {
 			const selected = entries[this.selectedIndex];
-			const confirmingDetach = this.detachConfirmationTarget === selected?.agent;
+			const confirmingDetach =
+				selected !== undefined && this.detachConfirmation.isArmedOn(selected.agent);
 			const segments = [theme.fg("accent", "↑↓ select"), theme.fg("accent", "Enter view")];
 			if (
 				!confirmingDetach &&

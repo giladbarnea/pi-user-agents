@@ -9,6 +9,7 @@ import type {
 	Theme,
 	UIContext,
 } from "../shared.js";
+import { TimedConfirmation } from "../shared.ts";
 import { UserAgentWidget } from "../widget.ts";
 
 /** A widget under test that must never rebase. */
@@ -1014,5 +1015,30 @@ describe("UserAgentWidget rebase refusal warning", () => {
 		viewer.handleInput?.("r");
 
 		expect(viewer.render(100).join("\n")).not.toContain("Can't rebase");
+	});
+});
+
+describe("TimedConfirmation", () => {
+	test("arms on first press, confirms on repeat, re-arms on a new target, cancels, expires", async () => {
+		let expirations = 0;
+		const confirmation = new TimedConfirmation<string>(() => {
+			expirations += 1;
+		}, 20);
+
+		expect(confirmation.press("detach"), "Expected the first press to arm, not confirm").toBe(false);
+		expect(confirmation.isArmedOn("detach")).toBe(true);
+		expect(confirmation.press("rebase"), "Expected a different target to re-arm, not confirm").toBe(
+			false,
+		);
+		expect(confirmation.press("rebase")).toBe(true);
+		expect(confirmation.isArmedOn("rebase"), "Expected confirming to disarm").toBe(false);
+
+		confirmation.press("detach");
+		confirmation.cancel();
+		expect(confirmation.press("detach"), "Expected cancel to disarm").toBe(false);
+
+		await new Promise((resolve) => setTimeout(resolve, 40));
+		expect(confirmation.isArmedOn("detach"), "Expected the window to expire").toBe(false);
+		expect(expirations).toBe(1);
 	});
 });

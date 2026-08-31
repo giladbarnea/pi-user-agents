@@ -160,6 +160,50 @@ export type RebaseDelivery = {
 	deliver(agent: RunningAgent | CompletedAgent, messages: AgentMessage[]): void;
 };
 
+/** How long a confirmation stays armed, and how long a transient footer notice shows. */
+export const CONFIRMATION_WINDOW_MS = 4000;
+
+/**
+ * A two-press confirmation with a timeout: the first press arms it, a repeat press on the
+ * same target within the window confirms. A press on another target re-arms, cancel or
+ * expiry disarms. One instance serves every confirmable action on a surface.
+ */
+export class TimedConfirmation<Target> {
+	private armedOn: Target | undefined;
+	private expiry: ReturnType<typeof setTimeout> | undefined;
+
+	constructor(
+		private readonly onExpire: () => void,
+		private readonly windowMs: number = CONFIRMATION_WINDOW_MS,
+	) {}
+
+	/** One press of the action key: true means confirmed, false means armed and waiting. */
+	press(target: Target): boolean {
+		if (this.armedOn === target) {
+			this.cancel();
+			return true;
+		}
+		this.armedOn = target;
+		if (this.expiry) clearTimeout(this.expiry);
+		this.expiry = setTimeout(() => {
+			this.armedOn = undefined;
+			this.expiry = undefined;
+			this.onExpire();
+		}, this.windowMs);
+		return false;
+	}
+
+	cancel(): void {
+		this.armedOn = undefined;
+		if (this.expiry) clearTimeout(this.expiry);
+		this.expiry = undefined;
+	}
+
+	isArmedOn(target: Target): boolean {
+		return this.armedOn !== undefined && this.armedOn === target;
+	}
+}
+
 export const MESSAGE_TYPE = "pi-user-agents";
 export const DETACHED_ENTRY_TYPE = "pi-user-agents-detached";
 export const REBASED_ENTRY_TYPE = "pi-user-agents-rebased";

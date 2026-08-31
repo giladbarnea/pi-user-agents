@@ -14,7 +14,9 @@ import {
 import { renderAgentContextMeter } from "./context-meter.js";
 import type { AgentMessage, CompletedAgent, RunningAgent, Theme } from "./shared.js";
 import {
+	CONFIRMATION_WINDOW_MS,
 	errorMessage,
+	TimedConfirmation,
 	formatMs,
 	formatToolUses,
 	formatTurns,
@@ -149,11 +151,12 @@ export class AgentViewer implements Component {
 	private autoScroll = true;
 	private lastWidth = 0;
 	private justCopied = false;
-	private confirmingDetach = false;
 	private rebaseWarning: string | undefined;
 	private rebaseWarningTimer: ReturnType<typeof setTimeout> | undefined;
-	/** True while the sibling-detach confirmation shows; the next r confirms the rebase. */
-	private confirmingRebase = false;
+	/** One confirmation slot for both destructive overlay actions. */
+	private readonly confirmation = new TimedConfirmation<"detach" | "rebase">(() =>
+		this.tui.requestRender(),
+	);
 	private composer: Input | undefined;
 	/** Rich tool rendering is far too costly to repeat on every 100 ms widget tick. */
 	private renderedContent: { key: string; lines: string[] } | undefined;
@@ -174,13 +177,13 @@ export class AgentViewer implements Component {
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "ctrl+x") && isLiveAgent(this.agent)) {
-			this.confirmingDetach = false;
+			this.confirmation.cancel();
 			this.interrupt();
 			this.tui.requestRender();
 			return;
 		}
 		if (this.composer) {
-			this.confirmingDetach = false;
+			this.confirmation.cancel();
 			this.composer.handleInput(data);
 			this.tui.requestRender();
 			return;
@@ -189,9 +192,7 @@ export class AgentViewer implements Component {
 			this.requestDetach();
 			return;
 		}
-		this.confirmingDetach = false;
-		const rebaseConfirmPending = this.confirmingRebase;
-		this.confirmingRebase = false;
+		if (!matchesKey(data, "r")) this.confirmation.cancel();
 		if (matchesKey(data, "escape") || matchesKey(data, "q")) {
 			this.done("hide");
 			return;
@@ -211,12 +212,8 @@ export class AgentViewer implements Component {
 		}
 		if (matchesKey(data, "r")) {
 			if (this.canRebaseMainContext()) {
-				const detachCount = this.rebaseDetachCount();
-				if (detachCount > 0 && !rebaseConfirmPending) {
-					this.confirmingRebase = true;
-					this.showRebaseWarning(
-						`Rebase will detach ${detachCount} other agent session${detachCount === 1 ? "" : "s"}. r again to confirm`,
-					);
+				if (this.rebaseDetachCount() > 0 && !this.confirmation.press("rebase")) {
+					this.tui.requestRender();
 					return;
 				}
 				// Close the overlay: the payoff is the rebased conversation now sitting in the main transcript.
@@ -224,6 +221,7 @@ export class AgentViewer implements Component {
 				this.done("hide");
 				return;
 			}
+			this.confirmation.cancel();
 			const reason = this.rebaseBlockReason();
 			if (reason) {
 				this.showRebaseWarning(`Can't rebase: ${reason}`);
@@ -321,6 +319,16 @@ export class AgentViewer implements Component {
 						composeHint,
 				),
 			);
+		} else if (this.confirmation.isArmedOn("rebase")) {
+			const detachCount = this.rebaseDetachCount();
+			lines.push(
+				row(
+					th.fg(
+						"warning",
+						`⚠ Rebase will detach ${detachCount} other agent session${detachCount === 1 ? "" : "s"}. r again to confirm`,
+					),
+				),
+			);
 		} else if (this.rebaseWarning) {
 			lines.push(row(th.fg("warning", `⚠ ${this.rebaseWarning}`)));
 		} else {
@@ -345,8 +353,8 @@ export class AgentViewer implements Component {
 					mainContext ? th.fg("dim", mainContext) : "",
 					isLiveAgent(this.agent) ? th.fg("dim", "Esc hide") : "",
 					th.fg(
-						this.confirmingDetach ? "error" : "dim",
-						this.confirmingDetach ? "d again to confirm" : "d detach",
+						this.confirmation.isArmedOn("detach") ? "error" : "dim",
+						this.confirmation.isArmedOn("detach") ? "d again to confirm" : "d detach",
 					),
 				].filter(Boolean),
 			);
@@ -366,19 +374,16 @@ export class AgentViewer implements Component {
 		if (this.rebaseWarningTimer) clearTimeout(this.rebaseWarningTimer);
 		this.rebaseWarningTimer = setTimeout(() => {
 			this.rebaseWarning = undefined;
-			this.confirmingRebase = false;
 			this.tui.requestRender();
-		}, 4000);
+		}, CONFIRMATION_WINDOW_MS);
 		this.tui.requestRender();
 	}
 
 	private requestDetach(): void {
-		this.confirmingRebase = false;
-		if (this.confirmingDetach) {
+		if (this.confirmation.press("detach")) {
 			this.done("detach");
 			return;
 		}
-		this.confirmingDetach = true;
 		this.tui.requestRender();
 	}
 
