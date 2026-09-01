@@ -6,21 +6,25 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
 	buildAttachedAgent,
 	handleAttachCommand,
-	resolveChildSessionFile,
+	matchChildSessionFiles,
+	readDispatchRecord,
+	restoreDispatchOptions,
 	runAttachedTurns,
 	splitAtDispatchBoundary,
 	UNKNOWN_DISPATCH_BASE,
 } from "../attach.ts";
-import { conversationFingerprint } from "../rebase.ts";
+import { conversationFingerprint, mainContextFingerprint } from "../rebase.ts";
 import { DISPATCH_PREAMBLE, persistMessages } from "../runner.ts";
 import type {
 	AgentMessage,
 	AgentResultMessage,
+	DispatchRecordData,
 	ExtensionCommandContext,
 	Model,
 	RebaseDelivery,
 	RunningAgent,
 } from "../shared.ts";
+import { DISPATCH_ENTRY_TYPE } from "../shared.ts";
 import { UserAgentWidget } from "../widget.ts";
 
 /** A widget under test that must never rebase. */
@@ -99,7 +103,7 @@ describe("splitAtDispatchBoundary — recover a child's own conversation from it
 	});
 });
 
-describe("resolveChildSessionFile — session id (or unique prefix) → session file", () => {
+describe("matchChildSessionFiles — session ids on disk matching an id or prefix", () => {
 	function sessionDirectoryWith(fileNames: string[]): string {
 		const directory = mkdtempSync(join(tmpdir(), "pi-user-agents-attach-"));
 		for (const name of fileNames) writeFileSync(join(directory, name), "");
@@ -110,36 +114,26 @@ describe("resolveChildSessionFile — session id (or unique prefix) → session 
 	const fileA = `2026-09-01T10-00-00-000Z_${idA}.jsonl`;
 	const fileB = `2026-09-01T11-00-00-000Z_${idB}.jsonl`;
 
-	test("resolves an exact session id and a unique prefix", () => {
+	test("matches an exact session id and a prefix, ignoring non-session files", () => {
 		const directory = sessionDirectoryWith([fileA, fileB, "notes.txt", "no-underscore.jsonl"]);
 		try {
-			expect(resolveChildSessionFile(idA, directory)).toBe(join(directory, fileA));
-			expect(resolveChildSessionFile("0199d", directory)).toBe(join(directory, fileB));
+			expect(matchChildSessionFiles(idA, directory)).toEqual([
+				{ sessionId: idA, file: join(directory, fileA) },
+			]);
+			expect(matchChildSessionFiles("0199d", directory)).toEqual([
+				{ sessionId: idB, file: join(directory, fileB) },
+			]);
+			expect(matchChildSessionFiles("0199", directory)).toHaveLength(2);
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}
 	});
 
-	test("errors when nothing matches, including a missing session directory", () => {
+	test("returns nothing for an unmatched query or a missing session directory", () => {
 		const directory = sessionDirectoryWith([fileA]);
 		try {
-			expect(() => resolveChildSessionFile("ffff", directory)).toThrow(
-				'No agent session matches "ffff"',
-			);
-			expect(() => resolveChildSessionFile(idA, join(directory, "missing"))).toThrow(
-				`No agent session matches "${idA}"`,
-			);
-		} finally {
-			rmSync(directory, { recursive: true, force: true });
-		}
-	});
-
-	test("errors on an ambiguous prefix", () => {
-		const directory = sessionDirectoryWith([fileA, fileB]);
-		try {
-			expect(() => resolveChildSessionFile("0199", directory)).toThrow(
-				'"0199" matches 2 sessions',
-			);
+			expect(matchChildSessionFiles("ffff", directory)).toEqual([]);
+			expect(matchChildSessionFiles(idA, join(directory, "missing"))).toEqual([]);
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}
@@ -286,6 +280,31 @@ describe("runAttachedTurns — an attached agent parks first, then behaves like 
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
 	}
+
+	test("an agent detached before its lifecycle starts settles immediately instead of parking", async () => {
+		const prompts: string[] = [];
+		const session = fakeSession(prompts);
+		const agent = attachedAgent(session);
+		agent.aborted = true;
+
+		const lifecycle = runAttachedTurns(
+			{ appendEntry: () => undefined, sendMessage: () => undefined } as never,
+			() => false,
+			session,
+			agent,
+			{ update: () => undefined, addCompleted: () => undefined } as never,
+			() => undefined,
+		);
+		const outcome = await Promise.race([
+			lifecycle.then(() => "settled"),
+			new Promise((resolve) => setTimeout(() => resolve("still parked"), 100)),
+		]);
+
+		expect(outcome, "Expected the aborted lifecycle to end without waiting for a steer").toBe(
+			"settled",
+		);
+		expect(prompts).toEqual([]);
+	});
 
 	test("retire ends the parked lifecycle without prompting, and unsubscribes", async () => {
 		const prompts: string[] = [];
@@ -441,8 +460,12 @@ describe("handleAttachCommand — the /agent-attach command", () => {
 	const fakePi = { appendEntry: () => undefined, sendMessage: () => undefined } as never;
 	const noopWidgetDependencies = [() => undefined, () => undefined] as const;
 
-	function persistedChild(cwd: string, parentSession: string | undefined): SessionManager {
-		const child = SessionManager.create(cwd, undefined, { parentSession });
+	function persistedChild(
+		cwd: string,
+		parentSession: string | undefined,
+		id?: string,
+	): SessionManager {
+		const child = SessionManager.create(cwd, undefined, { parentSession, id });
 		persistMessages(
 			child,
 			[
@@ -514,6 +537,47 @@ describe("handleAttachCommand — the /agent-attach command", () => {
 		});
 	});
 
+	test("a prefix ambiguous across an attached row and a detached file errors instead of answering for the row", async () => {
+		await withTemporaryAgentDir(async (cwd) => {
+			const main = SessionManager.create(cwd);
+			persistedChild(cwd, main.getSessionFile(), "0199cccc-2222-7abc-9e05-6a2f18d7b4ce");
+			const attachedAgent = {
+				id: "user-1",
+				sessionId: "0199bbbb-1111-7abc-9e05-6a2f18d7b4ce",
+				command: "agent",
+				inheritedContext: true,
+				model: "provider/model",
+				modelLabel: "model",
+				task: "plan the migration",
+				invocation: "/agent plan the migration",
+				notifyMainAgent: false,
+				dispatchBaseFingerprint: "[]",
+				mainContextState: "separate",
+				status: "idle",
+				startedAt: Date.now(),
+				turnStartedAt: Date.now(),
+				activeTools: new Map<string, string>(),
+				toolUses: 0,
+				turnCount: 1,
+				responseText: "parked",
+				conversationMessages: [],
+				finished: Promise.resolve(),
+			} satisfies RunningAgent;
+			const runningAgents = new Set<RunningAgent>([attachedAgent]);
+			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies, noRebase);
+			const { ctx, notifications, confirmTitles } = fakeContext(cwd, main);
+
+			await handleAttachCommand(fakePi, runningAgents, widget, () => false, () => 2, "0199", ctx);
+
+			expect(
+				notifications.at(-1)?.message,
+				"Expected the prefix to be judged against rows AND files together",
+			).toBe('"0199" matches 2 sessions; use more characters');
+			expect(confirmTitles).toEqual([]);
+			expect(runningAgents.size).toBe(1);
+		});
+	});
+
 	test("an already-attached session is idempotent: no new agent, just the View agent? confirmation", async () => {
 		await withTemporaryAgentDir(async (cwd) => {
 			const main = SessionManager.create(cwd);
@@ -571,5 +635,194 @@ describe("handleAttachCommand — the /agent-attach command", () => {
 			expect(declined.customCalls, "Expected no to leave the overlay closed").toHaveLength(0);
 			expect(runningAgents.size).toBe(1);
 		});
+	});
+});
+
+describe("attach re-arms the rebase fast-forward — the round-tripped base fingerprints equal to main", () => {
+	test("a base with a compaction summary and a custom message survives the child-file round trip", async () => {
+		const mainDirectory = mkdtempSync(join(tmpdir(), "pi-user-agents-attach-main-"));
+		const childDirectory = mkdtempSync(join(tmpdir(), "pi-user-agents-attach-child-"));
+		try {
+			const main = SessionManager.create("/tmp/project", mainDirectory);
+			main.appendMessage({ role: "user", content: "first ask", timestamp: 1 } as never);
+			const keptEntryId = main.appendMessage({
+				role: "assistant",
+				content: [{ type: "text", text: "early answer" }],
+				timestamp: 2,
+				stopReason: "stop",
+			} as never);
+			main.appendCompaction("everything before the kept tail", keptEntryId, 50_000);
+			main.appendCustomMessageEntry(
+				"another-extension",
+				"a status message main acted on",
+				true,
+				{ key: "value" },
+			);
+			const mainFingerprint = mainContextFingerprint(main);
+			const inherited = structuredClone(main.buildSessionContext().messages);
+			expect(
+				inherited.map((message) => message.role),
+				"Fixture check: the base must exercise the synthetic-rebuild roles",
+			).toEqual(["compactionSummary", "assistant", "custom"]);
+
+			// The child writes its entries later than main wrote its own; entry timestamps differ.
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			const child = SessionManager.create("/tmp/project", childDirectory);
+			persistMessages(
+				child,
+				[
+					...inherited,
+					{ role: "user", content: `${DISPATCH_PREAMBLE}review the migration`, timestamp: 10 },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "migration reviewed" }],
+						timestamp: 11,
+						stopReason: "stop",
+					},
+				] as AgentMessage[],
+				[],
+			);
+			const reopened = SessionManager.open(child.getSessionFile() as string);
+			const model = { provider: "openai-codex", id: "gpt-5.6-luna", name: "luna" } as Model;
+
+			const agent = buildAttachedAgent(1, reopened, model, "/agent-attach x");
+
+			expect(
+				agent.dispatchBaseFingerprint,
+				"Expected the round-tripped base to fingerprint-equal main's live context, or r stays falsely withheld",
+			).toBe(mainFingerprint);
+		} finally {
+			rmSync(mainDirectory, { recursive: true, force: true });
+			rmSync(childDirectory, { recursive: true, force: true });
+		}
+	});
+
+	test("the fingerprint ignores rebuild bookkeeping but not content", () => {
+		const summary = [
+			{ role: "branchSummary", summary: "the path we abandoned", fromId: "main-e7", timestamp: 1 },
+		] as AgentMessage[];
+		const restamped = [
+			{ role: "branchSummary", summary: "the path we abandoned", fromId: "child-e2", timestamp: 9 },
+		] as AgentMessage[];
+		const edited = [
+			{ role: "branchSummary", summary: "a different summary", fromId: "main-e7", timestamp: 1 },
+		] as AgentMessage[];
+
+		expect(conversationFingerprint(restamped)).toBe(conversationFingerprint(summary));
+		expect(conversationFingerprint(edited)).not.toBe(conversationFingerprint(summary));
+	});
+});
+
+describe("dispatch record — the dispatch-time facts attach cannot read from messages alone", () => {
+	test("round-trips through the child session file", () => {
+		const directory = mkdtempSync(join(tmpdir(), "pi-user-agents-attach-record-"));
+		try {
+			const child = SessionManager.create("/tmp/project", directory);
+			const record: DispatchRecordData = {
+				forwardedArgs: ["--tools", "read,grep", "--no-extensions"],
+				task: "audit the migration",
+				isolate: false,
+			};
+			child.appendCustomEntry(DISPATCH_ENTRY_TYPE, record);
+			persistMessages(
+				child,
+				[
+					{ role: "user", content: `${DISPATCH_PREAMBLE}audit the migration`, timestamp: 1 },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "audited" }],
+						timestamp: 2,
+						stopReason: "stop",
+					},
+				] as AgentMessage[],
+				[],
+			);
+			const reopened = SessionManager.open(child.getSessionFile() as string);
+
+			expect(readDispatchRecord(reopened)).toEqual(record);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test("is absent on a child dispatched before the record existed", () => {
+		const directory = mkdtempSync(join(tmpdir(), "pi-user-agents-attach-record-"));
+		try {
+			const child = SessionManager.create("/tmp/project", directory);
+			persistMessages(
+				child,
+				[
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "hello" }],
+						timestamp: 1,
+						stopReason: "stop",
+					},
+				] as AgentMessage[],
+				[],
+			);
+			const reopened = SessionManager.open(child.getSessionFile() as string);
+
+			expect(readDispatchRecord(reopened)).toBeUndefined();
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test("restoreDispatchOptions re-applies tool and resource restrictions; no record restores nothing", () => {
+		const restored = restoreDispatchOptions(
+			{
+				forwardedArgs: [
+					"--tools",
+					"read,grep",
+					"--no-extensions",
+					"--system-prompt",
+					"be terse",
+				],
+				task: "audit the migration",
+				isolate: false,
+			},
+			"/tmp/project",
+		);
+
+		expect(restored).toEqual({
+			resourceLoaderOptions: { noExtensions: true, systemPrompt: "be terse" },
+			tools: ["read", "grep"],
+		});
+		expect(restoreDispatchOptions(undefined, "/tmp/project")).toEqual({});
+	});
+
+	test("buildAttachedAgent trusts the record over boundary sniffing for the task and context flag", () => {
+		const directory = mkdtempSync(join(tmpdir(), "pi-user-agents-attach-record-"));
+		try {
+			const child = SessionManager.create("/tmp/project", directory);
+			// No preamble anywhere: without the record, the task would fall back to the first prompt.
+			persistMessages(
+				child,
+				[
+					{ role: "user", content: "raw first prompt", timestamp: 1 },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "answered" }],
+						timestamp: 2,
+						stopReason: "stop",
+					},
+				] as AgentMessage[],
+				[],
+			);
+			const reopened = SessionManager.open(child.getSessionFile() as string);
+			const model = { provider: "openai-codex", id: "gpt-5.6-luna", name: "luna" } as Model;
+
+			const agent = buildAttachedAgent(3, reopened, model, "/agent-attach x", {
+				forwardedArgs: [],
+				task: "the stored task",
+				isolate: true,
+			});
+
+			expect(agent.task).toBe("the stored task");
+			expect(agent.inheritedContext).toBe(false);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
 	});
 });

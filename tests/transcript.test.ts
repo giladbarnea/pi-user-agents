@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type {
 	AgentEntryData,
+	AttachedEntryData,
 	RebasedEntryData,
 	AgentMessage,
 	AgentResultMessage,
@@ -11,7 +12,7 @@ import type {
 	RunningAgent,
 	Theme,
 } from "../shared.js";
-import { DETACHED_ENTRY_TYPE, MESSAGE_TYPE, REBASED_ENTRY_TYPE } from "../shared.js";
+import { ATTACHED_ENTRY_TYPE, DETACHED_ENTRY_TYPE, MESSAGE_TYPE, REBASED_ENTRY_TYPE } from "../shared.js";
 import {
 	buildAgentResultMessage,
 	formatStartNotification,
@@ -490,6 +491,42 @@ describe("detached session entry", () => {
 		expect(rendered?.trim()).toBe("Detached session 0199-abcd");
 		expect(
 			renderDetached?.({}, { expanded: false }, identityTheme),
+			"Expected an entry with no data to render nothing rather than a broken line",
+		).toBeUndefined();
+	});
+});
+
+describe("attached session entry", () => {
+	test("names the session that came back, and stays quiet without one", () => {
+		initTheme(undefined, false);
+		type RenderedComponent = { render(width: number): string[] } | undefined;
+		let renderAttached:
+			| ((
+					entry: { data?: AttachedEntryData },
+					options: { expanded: boolean },
+					theme: Theme,
+			  ) => RenderedComponent)
+			| undefined;
+		const pi = {
+			registerMessageRenderer: () => undefined,
+			registerEntryRenderer: (customType: string, renderer: typeof renderAttached) => {
+				if (customType === ATTACHED_ENTRY_TYPE) renderAttached = renderer;
+			},
+		} as unknown as ExtensionAPI;
+		registerUserAgentRenderer(pi);
+		const identityTheme = {
+			bold: (text: string) => text,
+			fg: (_color: string, text: string) => text,
+		} as Theme;
+
+		const rendered = renderAttached
+			?.({ data: { sessionId: "0199-abcd" } }, { expanded: false }, identityTheme)
+			?.render(120)
+			.join("\n");
+
+		expect(rendered?.trim()).toBe("Attached session 0199-abcd");
+		expect(
+			renderAttached?.({}, { expanded: false }, identityTheme),
 			"Expected an entry with no data to render nothing rather than a broken line",
 		).toBeUndefined();
 	});

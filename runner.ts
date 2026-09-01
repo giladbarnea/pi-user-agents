@@ -33,7 +33,9 @@ import type {
 	RunningAgent,
 	ThinkingLevel,
 } from "./shared.js";
+import type { DispatchRecordData } from "./shared.js";
 import {
+	DISPATCH_ENTRY_TYPE,
 	errorMessage,
 	formatModel,
 	formatModelLabel,
@@ -90,17 +92,10 @@ async function startUserAgent(
 ): Promise<void> {
 	const parsed = parseAgentCommand(args, command);
 	const parsedForwardedArgs = parseForwardedArgs(parsed.forwardedArgs);
-	const agentDir = getAgentDir();
-	const settingsManager = SettingsManager.create(ctx.cwd, agentDir, {
-		projectTrusted: ctx.isProjectTrusted(),
-	});
-	const services = await createAgentSessionServices({
-		cwd: ctx.cwd,
-		agentDir,
-		settingsManager,
-		modelRuntime: (ctx.modelRegistry as unknown as { runtime: ModelRuntime }).runtime,
-		resourceLoaderOptions: buildChildResourceLoaderOptions(parsedForwardedArgs, ctx.cwd),
-	});
+	const services = await createChildServices(
+		ctx,
+		buildChildResourceLoaderOptions(parsedForwardedArgs, ctx.cwd),
+	);
 	const forwarded = resolveForwardedOptions(parsedForwardedArgs, services.modelRuntime);
 	const selectedModel = forwarded.model ?? ctx.model;
 	if (!selectedModel) throw new Error("No current model is selected; pass -m MODELNAME");
@@ -112,6 +107,12 @@ async function startUserAgent(
 	const childSessionManager = SessionManager.create(services.cwd, undefined, {
 		parentSession: ctx.sessionManager.getSessionFile(),
 	});
+	// The dispatch record: /agent-attach restores tool and resource options from it later.
+	childSessionManager.appendCustomEntry(DISPATCH_ENTRY_TYPE, {
+		forwardedArgs: parsed.forwardedArgs,
+		task: parsed.task,
+		isolate: parsed.isolate,
+	} satisfies DispatchRecordData);
 	const runningAgent = createRunningAgent(
 		nextAgentNumber(),
 		childSessionManager.getSessionId(),
@@ -263,7 +264,7 @@ export function createRebaseDelivery(
 }
 
 /** Session inputs derived from forwarded pi CLI options, ready to hand to the child session. */
-type ChildResourceLoaderOptions = {
+export type ChildResourceLoaderOptions = {
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
 	additionalExtensionPaths?: string[];
@@ -276,13 +277,36 @@ type ChildResourceLoaderOptions = {
 	noContextFiles?: boolean;
 };
 
-type ForwardedOptions = {
-	model?: Model;
-	thinkingLevel?: ThinkingLevel;
+export type ChildToolOptions = {
 	tools?: string[];
 	excludeTools?: string[];
 	noTools?: "all" | "builtin";
 };
+
+type ForwardedOptions = ChildToolOptions & {
+	model?: Model;
+	thinkingLevel?: ThinkingLevel;
+};
+
+/** The cwd-bound services for one child session; the parent's ModelRuntime rides along (see INTERNALS). */
+export function createChildServices(
+	ctx: ExtensionCommandContext,
+	resourceLoaderOptions?: ChildResourceLoaderOptions,
+): Promise<AgentSessionServices> {
+	const agentDir = getAgentDir();
+	const settingsManager = SettingsManager.create(ctx.cwd, agentDir, {
+		projectTrusted: ctx.isProjectTrusted(),
+	});
+	return createAgentSessionServices({
+		cwd: ctx.cwd,
+		agentDir,
+		settingsManager,
+		// The extension facade wraps the parent's runtime as a plain property; sharing it keeps
+		// extension-registered providers (their process-global dedup guard) available to the child.
+		modelRuntime: (ctx.modelRegistry as unknown as { runtime: ModelRuntime }).runtime,
+		resourceLoaderOptions,
+	});
+}
 
 /** Parse forwarded pi CLI tokens once before model and session resolution. */
 export function parseForwardedArgs(forwardedArgs: string[]): Args {
@@ -382,12 +406,17 @@ export function resolveForwardedOptions(
 		}
 	}
 	if (parsed.thinking) forwarded.thinkingLevel = parsed.thinking;
+	return { ...forwarded, ...resolveToolOptions(parsed) };
+}
 
-	if (parsed.noTools) forwarded.noTools = "all";
-	else if (parsed.noBuiltinTools) forwarded.noTools = "builtin";
-	if (parsed.tools) forwarded.tools = parsed.tools;
-	if (parsed.excludeTools) forwarded.excludeTools = parsed.excludeTools;
-	return forwarded;
+/** Map parsed pi tool options onto child-session inputs; dispatch and attach share this. */
+export function resolveToolOptions(parsed: Args): ChildToolOptions {
+	const options: ChildToolOptions = {};
+	if (parsed.noTools) options.noTools = "all";
+	else if (parsed.noBuiltinTools) options.noTools = "builtin";
+	if (parsed.tools) options.tools = parsed.tools;
+	if (parsed.excludeTools) options.excludeTools = parsed.excludeTools;
+	return options;
 }
 
 export function buildChildResourceLoaderOptions(

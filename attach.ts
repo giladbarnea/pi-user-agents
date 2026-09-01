@@ -1,18 +1,16 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import {
-	createAgentSessionFromServices,
-	createAgentSessionServices,
-	getAgentDir,
-	type ModelRuntime,
-	SessionManager,
-	SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { createAgentSessionFromServices, SessionManager } from "@earendil-works/pi-coding-agent";
 import { conversationFingerprint } from "./rebase.js";
+import type { ChildResourceLoaderOptions, ChildToolOptions } from "./runner.js";
 import {
 	assistantText,
+	buildChildResourceLoaderOptions,
+	createChildServices,
 	DISPATCH_PREAMBLE,
+	parseForwardedArgs,
 	reportAgentFailure,
+	resolveToolOptions,
 	runChildTurns,
 	subscribeToChildSession,
 	waitForInstruction,
@@ -20,12 +18,21 @@ import {
 import type {
 	AgentMessage,
 	AgentSession,
+	AttachedEntryData,
+	DispatchRecordData,
 	ExtensionAPI,
 	ExtensionCommandContext,
 	Model,
 	RunningAgent,
 } from "./shared.js";
-import { errorMessage, formatModel, formatModelLabel, logSteering } from "./shared.js";
+import {
+	ATTACHED_ENTRY_TYPE,
+	DISPATCH_ENTRY_TYPE,
+	errorMessage,
+	formatModel,
+	formatModelLabel,
+	logSteering,
+} from "./shared.js";
 import { buildAgentResultMessage, reportCommandError } from "./transcript.js";
 import type { UserAgentWidget } from "./widget.js";
 
@@ -69,21 +76,22 @@ function userMessageText(message: Extract<AgentMessage, { role: "user" }>): stri
 		.join("\n");
 }
 
+export type ChildSessionFileMatch = { sessionId: string; file: string };
+
 /**
- * Resolve a session id, or a unique prefix of one, to its file in a session directory.
- * Pi names session files `<timestamp>_<session-id>.jsonl`, so resolution reads names only.
- * Raises an error when nothing matches or the prefix is ambiguous.
+ * The session files in a directory whose id matches the query exactly or by prefix.
+ * Pi names session files `<timestamp>_<session-id>.jsonl`, so matching reads names only.
  */
-export function resolveChildSessionFile(query: string, sessionDirectory: string): string {
+export function matchChildSessionFiles(
+	query: string,
+	sessionDirectory: string,
+): ChildSessionFileMatch[] {
 	const fileNames = existsSync(sessionDirectory) ? readdirSync(sessionDirectory) : [];
-	const matches = fileNames.filter((name) => {
+	return fileNames.flatMap((name) => {
 		const sessionId = sessionIdFromFileName(name);
-		return sessionId !== undefined && (sessionId === query || sessionId.startsWith(query));
+		if (sessionId === undefined || !sessionId.startsWith(query)) return [];
+		return [{ sessionId, file: join(sessionDirectory, name) }];
 	});
-	if (matches.length === 0) throw new Error(`No agent session matches "${query}"`);
-	if (matches.length > 1)
-		throw new Error(`"${query}" matches ${matches.length} sessions; use more characters`);
-	return join(sessionDirectory, matches[0]!);
 }
 
 function sessionIdFromFileName(fileName: string): string | undefined {
@@ -93,16 +101,45 @@ function sessionIdFromFileName(fileName: string): string | undefined {
 	return fileName.slice(separator + 1, -".jsonl".length);
 }
 
+/** The dispatch record persisted in the child's file, or undefined for pre-record and /fork children. */
+export function readDispatchRecord(
+	childSessionManager: SessionManager,
+): DispatchRecordData | undefined {
+	for (const entry of childSessionManager.getEntries()) {
+		if (entry.type === "custom" && entry.customType === DISPATCH_ENTRY_TYPE)
+			return entry.data as DispatchRecordData | undefined;
+	}
+	return undefined;
+}
+
+/**
+ * Re-apply the dispatch-time pi options the session file does not persist: the tool set and the
+ * resource loader restrictions. Without a record nothing is restored and pi defaults apply.
+ */
+export function restoreDispatchOptions(
+	record: DispatchRecordData | undefined,
+	cwd: string,
+): ChildToolOptions & { resourceLoaderOptions?: ChildResourceLoaderOptions } {
+	if (!record) return {};
+	const parsed = parseForwardedArgs(record.forwardedArgs);
+	return {
+		resourceLoaderOptions: buildChildResourceLoaderOptions(parsed, cwd),
+		...resolveToolOptions(parsed),
+	};
+}
+
 /**
  * Rebuild an idle, steerable RunningAgent from a reopened child session and its resolved model.
  * The child's own conversation, task, latest response, and rebase base all come from the file;
- * with no recognizable dispatch boundary the whole context attaches and rebase stays withheld.
+ * the dispatch record refines the task and context flag, and with no recognizable dispatch
+ * boundary the whole context attaches and rebase stays withheld.
  */
 export function buildAttachedAgent(
 	sequenceNumber: number,
 	childSessionManager: SessionManager,
 	model: Model,
 	invocation: string,
+	record?: DispatchRecordData,
 ): RunningAgent {
 	const contextMessages = childSessionManager.buildSessionContext().messages;
 	const boundary = splitAtDispatchBoundary(contextMessages);
@@ -118,10 +155,15 @@ export function buildAttachedAgent(
 		id: `user-${sequenceNumber.toString(36)}`,
 		sessionId: childSessionManager.getSessionId(),
 		command: "agent",
-		inheritedContext: boundary ? boundary.base.length > 0 : true,
+		inheritedContext: record
+			? !record.isolate
+			: boundary
+				? boundary.base.length > 0
+				: true,
 		model: formatModel(model),
 		modelLabel: formatModelLabel(model),
 		task:
+			record?.task ??
 			boundary?.task ??
 			(firstUserMessage === undefined ? "(no messages)" : userMessageText(firstUserMessage)),
 		invocation,
@@ -163,6 +205,8 @@ export async function runAttachedTurns(
 	unsubscribe: () => void,
 ): Promise<void> {
 	try {
+		// The user can detach during the extension bind, before this lifecycle parks.
+		if (runningAgent.aborted) return;
 		const instruction = await waitForInstruction(runningAgent, widget);
 		if (instruction !== undefined)
 			await runChildTurns(pi, isShuttingDown, instruction, session, runningAgent, widget);
@@ -209,43 +253,47 @@ async function attachUserAgent(
 	if (!query || /\s/.test(query)) throw new Error("Usage: /agent-attach <child-session-id>");
 	if (ctx.hasUI) widget.setUI(ctx.ui);
 
+	// One resolution over the whole universe — attached rows and files on disk together — so a
+	// prefix unique among rows cannot mask an ambiguity with a detached session, and a live row
+	// whose file is not written yet still resolves. Dispatch creates children in pi's default
+	// session directory for the cwd; that is where the files are.
 	const attachedIds = widget.matchAttachedSessionIds(query);
-	if (attachedIds.length > 1)
-		throw new Error(
-			`"${query}" matches ${attachedIds.length} attached agent sessions; use more characters`,
-		);
-	if (attachedIds.length === 1) {
-		await confirmViewAgent(ctx, widget, attachedIds[0]!, "Agent already attached");
+	const childSessionDirectory = SessionManager.create(ctx.cwd).getSessionDir();
+	const fileMatches = matchChildSessionFiles(query, childSessionDirectory);
+	const matchedSessionIds = [
+		...new Set([...attachedIds, ...fileMatches.map((match) => match.sessionId)]),
+	];
+	if (matchedSessionIds.length === 0) throw new Error(`No agent session matches "${query}"`);
+	if (matchedSessionIds.length > 1)
+		throw new Error(`"${query}" matches ${matchedSessionIds.length} sessions; use more characters`);
+	const sessionId = matchedSessionIds[0]!;
+
+	if (attachedIds.includes(sessionId)) {
+		await confirmViewAgent(ctx, widget, sessionId, "Agent already attached");
 		return;
 	}
 
 	const mainSessionFile = ctx.sessionManager.getSessionFile();
 	if (!mainSessionFile)
 		throw new Error("This session has no file; only a persisted session can attach agents");
-	// Dispatch creates children in pi's default session directory for the cwd; look there.
-	const childSessionDirectory = SessionManager.create(ctx.cwd).getSessionDir();
-	const childSessionFile = resolveChildSessionFile(query, childSessionDirectory);
+	const childSessionFile = fileMatches.find((match) => match.sessionId === sessionId)!.file;
 	const childSessionManager = SessionManager.open(childSessionFile);
 	if (childSessionManager.getHeader()?.parentSession !== mainSessionFile)
 		throw new Error(
 			`Session ${childSessionManager.getSessionId()} is not a child session of this session`,
 		);
 
-	const agentDir = getAgentDir();
-	const settingsManager = SettingsManager.create(ctx.cwd, agentDir, {
-		projectTrusted: ctx.isProjectTrusted(),
-	});
-	const services = await createAgentSessionServices({
-		cwd: ctx.cwd,
-		agentDir,
-		settingsManager,
-		modelRuntime: (ctx.modelRegistry as unknown as { runtime: ModelRuntime }).runtime,
-	});
+	const record = readDispatchRecord(childSessionManager);
+	const restored = restoreDispatchOptions(record, ctx.cwd);
+	const services = await createChildServices(ctx, restored.resourceLoaderOptions);
 	// A non-empty session manager takes pi's resume path: messages, model, and thinking level
-	// are restored from the child's own file.
+	// are restored from the child's own file; tools and resources come from the dispatch record.
 	const { session, modelFallbackMessage } = await createAgentSessionFromServices({
 		services,
 		sessionManager: childSessionManager,
+		tools: restored.tools,
+		excludeTools: restored.excludeTools,
+		noTools: restored.noTools,
 	});
 	const model = session.agent.state.model as Model | undefined;
 	if (!model) {
@@ -259,6 +307,7 @@ async function attachUserAgent(
 		childSessionManager,
 		model,
 		`/agent-attach ${query}`,
+		record,
 	);
 	runningAgent.session = session;
 	runningAgents.add(runningAgent);
@@ -282,6 +331,9 @@ async function attachUserAgent(
 		runningAgents.delete(runningAgent);
 		widget.update();
 	});
+	// The detach breadcrumb's counterpart: after a reload the transcript still tells the truth.
+	pi.appendEntry<AttachedEntryData>(ATTACHED_ENTRY_TYPE, { sessionId: runningAgent.sessionId });
+	if (runningAgent.aborted) return;
 	await confirmViewAgent(ctx, widget, runningAgent.sessionId, "Agent attached");
 }
 

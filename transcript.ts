@@ -6,6 +6,7 @@ import type {
 	AgentEntryData,
 	AgentMessage,
 	AgentResultMessage,
+	AttachedEntryData,
 	DetachedEntryData,
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -14,6 +15,7 @@ import type {
 	Theme,
 } from "./shared.js";
 import {
+	ATTACHED_ENTRY_TYPE,
 	contextLabel,
 	DETACHED_ENTRY_TYPE,
 	escapeAttribute,
@@ -220,6 +222,11 @@ export function registerUserAgentRenderer(pi: ExtensionAPI): void {
 	pi.registerEntryRenderer<DetachedEntryData>(DETACHED_ENTRY_TYPE, (entry, _state, theme) =>
 		entry.data
 			? new Text(theme.fg("dim", `Detached session ${entry.data.sessionId}`), 1, 0)
+			: undefined,
+	);
+	pi.registerEntryRenderer<AttachedEntryData>(ATTACHED_ENTRY_TYPE, (entry, _state, theme) =>
+		entry.data
+			? new Text(theme.fg("dim", `Attached session ${entry.data.sessionId}`), 1, 0)
 			: undefined,
 	);
 	pi.registerEntryRenderer<RebasedEntryData>(REBASED_ENTRY_TYPE, (entry, _state, theme) =>

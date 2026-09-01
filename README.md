@@ -95,7 +95,7 @@ Detached session 0199c4f2-8b1a-7c3d-9e05-6a2f18d7b4ce
 
 Pick it back up whenever you like — `/resume 0199c4f2`, or `pi -r` and choose it from the list. It resumes as an ordinary Pi session with its full history, its model, and its thinking level, and from there it is a normal agent you talk to directly.
 
-Or take it back as a background agent instead: `/agent-attach 0199c4f2` puts the session back in the widget — parked idle, its task, transcript, and latest answer restored from its file, ready to steer, squash, or detach again. Attach accepts a full session id or a unique prefix, offers to open the overlay on success, is idempotent for a session that's already attached, and refuses anything that isn't a child session of the current conversation.
+Or take it back as a background agent instead: `/agent-attach 0199c4f2` puts the session back in the widget — parked idle, its task, transcript, latest answer, and dispatch-time options (`--tools`, `--no-extensions`, …) restored, ready to steer, squash, or detach again. Attach accepts a full session id or a unique prefix, offers to open the overlay on success, is idempotent for a session that's already attached, and refuses anything that isn't a child session of the current conversation. The transcript records the return: `Attached session 0199c4f2-…`.
 
 ### 5. Squash — or don't
 

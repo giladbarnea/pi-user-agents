@@ -44,6 +44,19 @@ export type DetachedEntryData = {
 	sessionId: string;
 };
 
+export type AttachedEntryData = {
+	sessionId: string;
+};
+
+/** Persisted in the child session at dispatch: the facts attach cannot recover from messages alone. */
+export type DispatchRecordData = {
+	/** The pi CLI tokens the dispatch forwarded, e.g. ["--tools", "read,grep"]. */
+	forwardedArgs: string[];
+	/** The plain task, without the dispatch preamble. */
+	task: string;
+	isolate: boolean;
+};
+
 export type RebaseStats = {
 	messageCount: number;
 	tokenEstimate: number;
@@ -207,6 +220,8 @@ export class TimedConfirmation<Target> {
 export const MESSAGE_TYPE = "pi-user-agents";
 export const DETACHED_ENTRY_TYPE = "pi-user-agents-detached";
 export const REBASED_ENTRY_TYPE = "pi-user-agents-rebased";
+export const ATTACHED_ENTRY_TYPE = "pi-user-agents-attached";
+export const DISPATCH_ENTRY_TYPE = "pi-user-agents-dispatch";
 export const WIDGET_KEY = "pi-user-agents";
 export const STEERING_LOG_PATH = `${tmpdir()}/pi-user-agents-steer.log`;
 

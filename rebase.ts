@@ -8,10 +8,21 @@ type MainSessionManager = ExtensionCommandContext["sessionManager"];
  * Fingerprint a context snapshot for the rebase fast-forward precondition: the main session's
  * live context must still fingerprint-equal the base the child was dispatched from.
  *
+ * Compares content, not file bookkeeping: rebuilding custom, compaction, and branch summaries
+ * from a session file re-stamps their timestamps (and a branch summary's fromId), so a base
+ * round-tripped through a child's file would never equal main's live context otherwise.
+ *
  * @example conversationFingerprint([]) === conversationFingerprint([]) // true
  */
 export function conversationFingerprint(messages: readonly AgentMessage[]): string {
-	return JSON.stringify(messages);
+	return JSON.stringify(messages.map(fingerprintedMessage));
+}
+
+function fingerprintedMessage(message: AgentMessage): Omit<AgentMessage, "timestamp"> {
+	const { timestamp: _timestamp, ...content } = message;
+	if (content.role !== "branchSummary") return content;
+	const { fromId: _fromId, ...branchContent } = content;
+	return branchContent;
 }
 
 /** Rebuilding a session-sized context string is only worth doing when the branch tip moved. */
