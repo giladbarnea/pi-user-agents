@@ -88,7 +88,8 @@ export type AgentCommandDetails = {
 	agentId?: string;
 	command: AgentCommandName;
 	mainContextState?: MainContextState;
-	inheritedContext: boolean;
+	/** Absent on command-error cards: an error has no inherited-or-isolated notion. */
+	inheritedContext?: boolean;
 	model: string;
 	modelLabel: string;
 	task: string;

@@ -8,7 +8,6 @@ import {
 	handleAttachCommand,
 	matchChildSessionFiles,
 	readDispatchRecord,
-	restoreDispatchOptions,
 	runAttachedTurns,
 	splitAtDispatchBoundary,
 	UNKNOWN_DISPATCH_BASE,
@@ -233,14 +232,24 @@ describe("buildAttachedAgent — an idle, steerable row rebuilt from the child's
 	});
 });
 
-describe("runAttachedTurns — an attached agent parks first, then behaves like any child", () => {
+describe("runAttachedTurns — an attached agent binds, parks, then behaves like any child", () => {
 	type FakeSession = NonNullable<RunningAgent["session"]>;
+	type SessionCounters = { unsubscribed: number; bound: number };
 
-	function fakeSession(prompts: string[]): FakeSession {
+	function fakeSession(
+		prompts: string[],
+		counters: SessionCounters = { unsubscribed: 0, bound: 0 },
+	): FakeSession {
 		const messages: Array<Record<string, unknown>> = [];
 		return {
 			isStreaming: false,
 			agent: { state: { messages } },
+			bindExtensions: async () => {
+				counters.bound += 1;
+			},
+			subscribe: () => () => {
+				counters.unsubscribed += 1;
+			},
 			prompt: (instruction: string) => {
 				prompts.push(instruction);
 				messages.push({
@@ -281,7 +290,7 @@ describe("runAttachedTurns — an attached agent parks first, then behaves like 
 		} satisfies RunningAgent;
 	}
 
-	test("an agent detached before its lifecycle starts settles immediately instead of parking", async () => {
+	test("an agent detached before its lifecycle parks settles immediately instead of waiting", async () => {
 		const prompts: string[] = [];
 		const session = fakeSession(prompts);
 		const agent = attachedAgent(session);
@@ -293,7 +302,6 @@ describe("runAttachedTurns — an attached agent parks first, then behaves like 
 			session,
 			agent,
 			{ update: () => undefined, addCompleted: () => undefined } as never,
-			() => undefined,
 		);
 		const outcome = await Promise.race([
 			lifecycle.then(() => "settled"),
@@ -308,9 +316,9 @@ describe("runAttachedTurns — an attached agent parks first, then behaves like 
 
 	test("retire ends the parked lifecycle without prompting, and unsubscribes", async () => {
 		const prompts: string[] = [];
-		const session = fakeSession(prompts);
+		const counters = { unsubscribed: 0, bound: 0 };
+		const session = fakeSession(prompts, counters);
 		const agent = attachedAgent(session);
-		let unsubscribed = 0;
 
 		const lifecycle = runAttachedTurns(
 			{ appendEntry: () => undefined, sendMessage: () => undefined } as never,
@@ -318,17 +326,15 @@ describe("runAttachedTurns — an attached agent parks first, then behaves like 
 			session,
 			agent,
 			{ update: () => undefined, addCompleted: () => undefined } as never,
-			() => {
-				unsubscribed += 1;
-			},
 		);
-		await Promise.resolve();
+		await new Promise<void>((resolve) => setImmediate(resolve));
 		if (!agent.retire) throw new Error("retire closure was not assigned while parked");
 		agent.retire();
 		await lifecycle;
 
 		expect(prompts).toEqual([]);
-		expect(unsubscribed).toBe(1);
+		expect(counters.bound, "Expected the lifecycle to bind the child's extensions").toBe(1);
+		expect(counters.unsubscribed).toBe(1);
 	});
 
 	test("resume prompts the child with the instruction verbatim and posts a TUI-only result card", async () => {
@@ -346,9 +352,8 @@ describe("runAttachedTurns — an attached agent parks first, then behaves like 
 			session,
 			agent,
 			{ update: () => undefined, addCompleted: () => undefined } as never,
-			() => undefined,
 		);
-		await Promise.resolve();
+		await new Promise<void>((resolve) => setImmediate(resolve));
 		if (!agent.resume) throw new Error("resume closure was not assigned while parked");
 		agent.resume("dig deeper into the flaky test");
 		await new Promise<void>((resolve) => setImmediate(resolve));
@@ -368,6 +373,8 @@ describe("runAttachedTurns — an attached agent parks first, then behaves like 
 		const session = {
 			isStreaming: false,
 			agent: { state: { messages: [] } },
+			bindExtensions: async () => undefined,
+			subscribe: () => () => undefined,
 			prompt: () => Promise.reject(new Error("provider exploded")),
 			extensionRunner: { emit: async () => undefined },
 		} as unknown as FakeSession;
@@ -388,9 +395,8 @@ describe("runAttachedTurns — an attached agent parks first, then behaves like 
 				addCompleted: (_agent: RunningAgent, message: AgentResultMessage) =>
 					completed.push(message),
 			} as never,
-			() => undefined,
 		);
-		await Promise.resolve();
+		await new Promise<void>((resolve) => setImmediate(resolve));
 		agent.resume?.("go");
 		await lifecycle;
 
@@ -398,6 +404,49 @@ describe("runAttachedTurns — an attached agent parks first, then behaves like 
 		expect(agent.error).toBe("provider exploded");
 		expect(completed).toHaveLength(1);
 		expect(completed[0]?.details.ok).toBe(false);
+		expect(entries).toHaveLength(1);
+	});
+
+	test("a bind failure settles through the same error path instead of stranding the row", async () => {
+		const session = {
+			isStreaming: false,
+			agent: { state: { messages: [] } },
+			bindExtensions: async () => {
+				throw new Error("extension bind exploded");
+			},
+			subscribe: () => () => undefined,
+			prompt: () => Promise.resolve(),
+			extensionRunner: { emit: async () => undefined },
+		} as unknown as FakeSession;
+		const agent = attachedAgent(session);
+		const entries: unknown[] = [];
+		const completed: AgentResultMessage[] = [];
+
+		const lifecycle = runAttachedTurns(
+			{
+				appendEntry: (_customType: string, data: unknown) => entries.push(data),
+				sendMessage: () => undefined,
+			} as never,
+			() => false,
+			session,
+			agent,
+			{
+				update: () => undefined,
+				addCompleted: (_agent: RunningAgent, message: AgentResultMessage) =>
+					completed.push(message),
+			} as never,
+		);
+		const outcome = await Promise.race([
+			lifecycle.then(() => "settled"),
+			new Promise((resolve) => setTimeout(() => resolve("still parked"), 100)),
+		]);
+
+		expect(outcome, "Expected a bind failure to end the lifecycle, not strand an idle row").toBe(
+			"settled",
+		);
+		expect(agent.status).toBe("posted");
+		expect(agent.error).toBe("extension bind exploded");
+		expect(completed).toHaveLength(1);
 		expect(entries).toHaveLength(1);
 	});
 });
@@ -767,29 +816,6 @@ describe("dispatch record — the dispatch-time facts attach cannot read from me
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}
-	});
-
-	test("restoreDispatchOptions re-applies tool and resource restrictions; no record restores nothing", () => {
-		const restored = restoreDispatchOptions(
-			{
-				forwardedArgs: [
-					"--tools",
-					"read,grep",
-					"--no-extensions",
-					"--system-prompt",
-					"be terse",
-				],
-				task: "audit the migration",
-				isolate: false,
-			},
-			"/tmp/project",
-		);
-
-		expect(restored).toEqual({
-			resourceLoaderOptions: { noExtensions: true, systemPrompt: "be terse" },
-			tools: ["read", "grep"],
-		});
-		expect(restoreDispatchOptions(undefined, "/tmp/project")).toEqual({});
 	});
 
 	test("buildAttachedAgent trusts the record over boundary sniffing for the task and context flag", () => {

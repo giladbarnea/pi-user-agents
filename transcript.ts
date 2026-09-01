@@ -46,7 +46,6 @@ export function reportCommandError(
 		display: true,
 		details: {
 			command,
-			inheritedContext: command === "agent",
 			model: "",
 			modelLabel: "",
 			task: args.trim(),
@@ -331,7 +330,7 @@ function buildRendererParts(content: string, details: AgentCommandDetails | unde
 	const parts: string[] = [];
 	if (details?.modelLabel) parts.push(details.modelLabel);
 	else if (details?.model) parts.push(details.model);
-	if (details) parts.push(contextLabel(details.inheritedContext));
+	if (details?.inheritedContext !== undefined) parts.push(contextLabel(details.inheritedContext));
 	const mainContext = mainContextLabel(details?.mainContextState);
 	if (mainContext) parts.push(mainContext);
 	if (details?.turnCount) parts.push(formatTurns(details.turnCount));

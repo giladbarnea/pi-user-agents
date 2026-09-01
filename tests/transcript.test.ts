@@ -17,6 +17,7 @@ import {
 	buildAgentResultMessage,
 	formatStartNotification,
 	registerUserAgentRenderer,
+	reportCommandError,
 	selectSquashedMessages,
 } from "../transcript.js";
 
@@ -529,5 +530,26 @@ describe("attached session entry", () => {
 			renderAttached?.({}, { expanded: false }, identityTheme),
 			"Expected an entry with no data to render nothing rather than a broken line",
 		).toBeUndefined();
+	});
+});
+
+describe("command error cards", () => {
+	test("carry no context label: a command error has no inherited-or-isolated notion", () => {
+		const sent: Array<{ details?: { inheritedContext?: boolean } }> = [];
+		const pi = {
+			sendMessage: (message: { details?: { inheritedContext?: boolean } }) => sent.push(message),
+		} as unknown as ExtensionAPI;
+		const headlessContext = { hasUI: false } as never;
+
+		reportCommandError(pi, "agent-attach", "ffff", headlessContext, "No agent session matches");
+		reportCommandError(pi, "agent", "-m", headlessContext, "Usage");
+
+		expect(sent).toHaveLength(2);
+		for (const message of sent) {
+			expect(
+				message.details?.inheritedContext,
+				"Expected no isolated/inherited-context claim on an error card",
+			).toBeUndefined();
+		}
 	});
 });

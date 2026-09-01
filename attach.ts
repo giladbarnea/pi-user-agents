@@ -2,7 +2,6 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createAgentSessionFromServices, SessionManager } from "@earendil-works/pi-coding-agent";
 import { conversationFingerprint } from "./rebase.js";
-import type { ChildResourceLoaderOptions, ChildToolOptions } from "./runner.js";
 import {
 	assistantText,
 	buildChildResourceLoaderOptions,
@@ -113,22 +112,6 @@ export function readDispatchRecord(
 }
 
 /**
- * Re-apply the dispatch-time pi options the session file does not persist: the tool set and the
- * resource loader restrictions. Without a record nothing is restored and pi defaults apply.
- */
-export function restoreDispatchOptions(
-	record: DispatchRecordData | undefined,
-	cwd: string,
-): ChildToolOptions & { resourceLoaderOptions?: ChildResourceLoaderOptions } {
-	if (!record) return {};
-	const parsed = parseForwardedArgs(record.forwardedArgs);
-	return {
-		resourceLoaderOptions: buildChildResourceLoaderOptions(parsed, cwd),
-		...resolveToolOptions(parsed),
-	};
-}
-
-/**
  * Rebuild an idle, steerable RunningAgent from a reopened child session and its resolved model.
  * The child's own conversation, task, latest response, and rebase base all come from the file;
  * the dispatch record refines the task and context flag, and with no recognizable dispatch
@@ -193,8 +176,10 @@ export function buildAttachedAgent(
 }
 
 /**
- * The attached agent's lifecycle: park until the user steers or retires it, then run turns
- * exactly like a dispatched child. Ends by shutting the child session's extensions down.
+ * The attached agent's lifecycle: bind the child's extensions, park until the user steers or
+ * retires it, then run turns exactly like a dispatched child. Every failure — the bind's
+ * included — settles through the shared error path, and the end shuts the child's extensions
+ * down.
  */
 export async function runAttachedTurns(
 	pi: ExtensionAPI,
@@ -202,9 +187,11 @@ export async function runAttachedTurns(
 	session: AgentSession,
 	runningAgent: RunningAgent,
 	widget: UserAgentWidget,
-	unsubscribe: () => void,
 ): Promise<void> {
+	let unsubscribe: (() => void) | undefined;
 	try {
+		await session.bindExtensions({ mode: "print" });
+		unsubscribe = subscribeToChildSession(session, runningAgent, widget);
 		// The user can detach during the extension bind, before this lifecycle parks.
 		if (runningAgent.aborted) return;
 		const instruction = await waitForInstruction(runningAgent, widget);
@@ -213,7 +200,7 @@ export async function runAttachedTurns(
 	} catch (error) {
 		reportAgentFailure(pi, isShuttingDown, runningAgent, widget, error);
 	} finally {
-		unsubscribe();
+		unsubscribe?.();
 		logSteering(runningAgent.id, "session-shutdown", { streaming: session.isStreaming });
 		await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 	}
@@ -283,17 +270,20 @@ async function attachUserAgent(
 			`Session ${childSessionManager.getSessionId()} is not a child session of this session`,
 		);
 
+	// The record replays through the same projections dispatch uses; a record-less child (an old
+	// dispatch, or a /fork) restores pi defaults.
 	const record = readDispatchRecord(childSessionManager);
-	const restored = restoreDispatchOptions(record, ctx.cwd);
-	const services = await createChildServices(ctx, restored.resourceLoaderOptions);
+	const dispatchArgs = parseForwardedArgs(record?.forwardedArgs ?? []);
+	const services = await createChildServices(
+		ctx,
+		buildChildResourceLoaderOptions(dispatchArgs, ctx.cwd),
+	);
 	// A non-empty session manager takes pi's resume path: messages, model, and thinking level
 	// are restored from the child's own file; tools and resources come from the dispatch record.
 	const { session, modelFallbackMessage } = await createAgentSessionFromServices({
 		services,
 		sessionManager: childSessionManager,
-		tools: restored.tools,
-		excludeTools: restored.excludeTools,
-		noTools: restored.noTools,
+		...resolveToolOptions(dispatchArgs),
 	});
 	const model = session.agent.state.model as Model | undefined;
 	if (!model) {
@@ -316,15 +306,14 @@ async function attachUserAgent(
 		widget.ensureTimer();
 		widget.update();
 	}
-	await session.bindExtensions({ mode: "print" });
-	const unsubscribe = subscribeToChildSession(session, runningAgent, widget);
+	// No awaits between the add above and this assignment: every later failure settles inside
+	// the lifecycle, so the row can never outlive its own removal hook.
 	runningAgent.finished = runAttachedTurns(
 		pi,
 		isShuttingDown,
 		session,
 		runningAgent,
 		widget,
-		unsubscribe,
 	).finally(() => {
 		logSteering(runningAgent.id, "agent-disposed", { status: runningAgent.status });
 		runningAgent.session?.dispose();
