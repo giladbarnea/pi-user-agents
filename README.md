@@ -95,7 +95,7 @@ Detached session 0199c4f2-8b1a-7c3d-9e05-6a2f18d7b4ce
 
 Pick it back up whenever you like — `/resume 0199c4f2`, or `pi -r` and choose it from the list. It resumes as an ordinary Pi session with its full history, its model, and its thinking level, and from there it is a normal agent you talk to directly.
 
-Or take it back as a background agent instead: `/agent-attach 0199c4f2` puts the session back in the widget — parked idle, its task, transcript, latest answer, and dispatch-time options (`--tools`, `--no-extensions`, …) restored, ready to steer, squash, or detach again. Attach accepts a full session id or a unique prefix, offers to open the overlay on success, is idempotent for a session that's already attached, and refuses anything that isn't a child session of the current conversation. The transcript records the return: `Attached session 0199c4f2-…`.
+Or take it back as a background agent instead: `/agent-attach 0199c4f2` puts the session back in the widget — parked idle, restored as dispatched down to its `--tools` and the rest of its options — and offers to open it. A unique id prefix is enough, only this conversation's own agents qualify, and the transcript records the return: `Attached session 0199c4f2-…`.
 
 ### 5. Squash — or don't
 
@@ -189,6 +189,7 @@ Everything goes through one command: `/agent [options] <task>`. Its one companio
 - [x] Agents stay alive until you end them — steer, interrupt, resume, across turns.
 - [x] Squash: a compact record of the exchange, delivered into the main context.
 - [x] Rebase: the raw conversation grafted onto the main session — fast-forward only, compaction-faithful.
+- [x] Attach: a detached session returns to the widget, restored as dispatched.
 - [x] Live syntax coloring and eager autocomplete for the `/agent` line.
 - [ ] Render an agent's compaction event in the overlay.
 - [ ] Wire the accepted-but-inert `pi` options.
@@ -196,7 +197,7 @@ Everything goes through one command: `/agent [options] <task>`. Its one companio
 
 ## Under the hood
 
-Design notes — result delivery through the Pi SDK, the squashed-message format, the rebase mechanism, runtime sharing, model resolution, and editor internals — live in [INTERNALS.md](INTERNALS.md). The complete command grammar lives in [PARSER_SPEC.md](PARSER_SPEC.md).
+Design notes — result delivery through the Pi SDK, the squashed-message format, the rebase and attach mechanisms, runtime sharing, model resolution, and editor internals — live in [INTERNALS.md](INTERNALS.md). The complete command grammar lives in [PARSER_SPEC.md](PARSER_SPEC.md).
 
 ---
 
