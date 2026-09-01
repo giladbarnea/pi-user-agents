@@ -839,6 +839,60 @@ describe("waitForInstruction — idle lifecycle parking", () => {
 });
 
 describe("runChildTurns — main-context delivery", () => {
+	test("sends the given instruction to the child verbatim (the dispatch preamble is the dispatch call site's concern)", async () => {
+		const prompts: string[] = [];
+		const messages: Array<Record<string, unknown>> = [];
+		const session = {
+			agent: { state: { messages } },
+			prompt: (instruction: string) => {
+				prompts.push(instruction);
+				messages.push({
+					role: "assistant",
+					content: [{ type: "text", text: "done" }],
+					stopReason: "stop",
+				});
+				return Promise.resolve();
+			},
+		} as unknown as NonNullable<RunningAgent["session"]>;
+		const agent = {
+			id: "user-1",
+			sessionId: "session-1",
+			command: "agent",
+			inheritedContext: true,
+			model: "provider/model",
+			modelLabel: "model",
+			task: "plan the migration",
+			invocation: "/agent -s plan the migration",
+			notifyMainAgent: true,
+			dispatchBaseFingerprint: "[]",
+			mainContextState: "will-squash",
+			status: "running",
+			startedAt: Date.now(),
+			turnStartedAt: Date.now(),
+			activeTools: new Map<string, string>(),
+			toolUses: 0,
+			turnCount: 0,
+			responseText: "",
+			conversationMessages: [],
+			session,
+			finished: Promise.resolve(),
+		} satisfies RunningAgent;
+
+		await runChildTurns(
+			{ appendEntry: () => undefined, sendMessage: () => undefined } as never,
+			() => false,
+			"plan the migration",
+			session,
+			agent,
+			{ update: () => undefined, addCompleted: () => undefined } as never,
+		);
+
+		expect(
+			prompts,
+			"Expected the instruction to reach the child unmodified — no injected preamble",
+		).toEqual(["plan the migration"]);
+	});
+
 	test("an interrupted partial response stays separate, while its resumed response can squash", async () => {
 		let resolvePrompt = () => undefined;
 		let promptCalls = 0;

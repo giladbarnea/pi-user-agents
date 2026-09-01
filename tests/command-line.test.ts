@@ -1,5 +1,6 @@
 import { describe, test } from "bun:test";
 import assert from "node:assert/strict";
+import { analyzeAgentEditorInput, scanAgentCommandLine } from "../command-line.ts";
 import { parseAgentCommand } from "../runner.ts";
 
 describe("theme option policy", () => {
@@ -36,6 +37,21 @@ describe("theme option policy", () => {
 				],
 			},
 			`Expected the unsupported theme advisory to retain its path. Got: ${JSON.stringify(parsed)}`,
+		);
+	});
+});
+
+describe("/agent-attach stays outside the /agent editor machinery", () => {
+	test("neither the semantic scan nor cursor analysis recognizes an /agent-attach line", () => {
+		assert.equal(
+			scanAgentCommandLine("/agent-attach 0199c4f2"),
+			undefined,
+			"Expected /agent coloring to ignore /agent-attach lines",
+		);
+		assert.equal(
+			analyzeAgentEditorInput("/agent-attach -", "/agent-attach -".length),
+			undefined,
+			"Expected /agent autocomplete to ignore /agent-attach lines",
 		);
 	});
 });

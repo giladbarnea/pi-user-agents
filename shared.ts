@@ -15,7 +15,7 @@ export type ThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
 export type Theme = ExtensionCommandContext["ui"]["theme"];
 export type UIContext = ExtensionCommandContext["ui"];
 
-export type AgentCommandName = "agent";
+export type AgentCommandName = "agent" | "agent-attach";
 export type MainContextState = "separate" | "will-squash" | "squashed" | "rebased";
 export type AgentStatus =
 	| "starting"

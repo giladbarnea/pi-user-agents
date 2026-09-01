@@ -1042,3 +1042,102 @@ describe("TimedConfirmation", () => {
 		expect(expirations).toBe(1);
 	});
 });
+
+describe("UserAgentWidget attach queries", () => {
+	function widgetWithRows(): {
+		widget: UserAgentWidget;
+		customCalls: unknown[];
+	} {
+		const runningAgent = {
+			id: "user-1",
+			sessionId: "0199aaaa-8b1a-7c3d-9e05-6a2f18d7b4ce",
+			command: "agent",
+			inheritedContext: true,
+			model: "provider/model",
+			modelLabel: "model",
+			task: "plan the migration",
+			invocation: "/agent plan the migration",
+			notifyMainAgent: false,
+			dispatchBaseFingerprint: "[]",
+			mainContextState: "separate",
+			status: "idle",
+			startedAt: Date.now(),
+			turnStartedAt: Date.now(),
+			activeTools: new Map<string, string>(),
+			toolUses: 0,
+			turnCount: 1,
+			responseText: "parked",
+			conversationMessages: [],
+			finished: Promise.resolve(),
+		} satisfies RunningAgent;
+		const completedSeed = {
+			...runningAgent,
+			id: "user-2",
+			sessionId: "0199bbbb-1111-7abc-9e05-6a2f18d7b4ce",
+			status: "posted",
+		} satisfies RunningAgent;
+		const widget = new UserAgentWidget(
+			new Set([runningAgent]),
+			() => undefined,
+			() => undefined,
+			noRebase,
+		);
+		widget.addCompleted(
+			completedSeed,
+			{
+				customType: "pi-user-agents",
+				content: "<user_agent>done</user_agent>",
+				display: false,
+				details: {
+					agentId: "user-2",
+					command: "agent",
+					inheritedContext: true,
+					model: "provider/model",
+					modelLabel: "model",
+					task: "audit the errors",
+					ok: true,
+				},
+			},
+			{ squashable: true },
+		);
+		const customCalls: unknown[] = [];
+		const ui = {
+			onTerminalInput: () => () => undefined,
+			getEditorText: () => "",
+			setWidget: () => undefined,
+			custom: (...call: unknown[]) => {
+				customCalls.push(call);
+				return Promise.resolve("hide");
+			},
+		} as unknown as UIContext;
+		widget.setUI(ui);
+		return { widget, customCalls };
+	}
+
+	test("matchAttachedSessionIds matches live rows and completed cards by exact id or prefix", () => {
+		const { widget } = widgetWithRows();
+
+		expect(widget.matchAttachedSessionIds("0199aaaa-8b1a-7c3d-9e05-6a2f18d7b4ce")).toEqual([
+			"0199aaaa-8b1a-7c3d-9e05-6a2f18d7b4ce",
+		]);
+		expect(widget.matchAttachedSessionIds("0199bbbb")).toEqual([
+			"0199bbbb-1111-7abc-9e05-6a2f18d7b4ce",
+		]);
+		expect(widget.matchAttachedSessionIds("0199").sort()).toEqual([
+			"0199aaaa-8b1a-7c3d-9e05-6a2f18d7b4ce",
+			"0199bbbb-1111-7abc-9e05-6a2f18d7b4ce",
+		]);
+		expect(widget.matchAttachedSessionIds("ffff")).toEqual([]);
+	});
+
+	test("openViewer opens the overlay for a live row or a completed card, and refuses unknown ids", () => {
+		const { widget, customCalls } = widgetWithRows();
+
+		expect(widget.openViewer("0199aaaa-8b1a-7c3d-9e05-6a2f18d7b4ce")).toBe(true);
+		expect(customCalls).toHaveLength(1);
+		expect(widget.openViewer("0199bbbb-1111-7abc-9e05-6a2f18d7b4ce")).toBe(true);
+		expect(customCalls).toHaveLength(2);
+		expect(widget.openViewer("ffff")).toBe(false);
+		expect(customCalls).toHaveLength(2);
+	});
+});

@@ -115,3 +115,24 @@ describe("parent main-context confirmation", () => {
 		expect(confirmMainContextSquash(separate, widget)).toBeUndefined();
 	});
 });
+
+describe("extension registration", () => {
+	test("registers the /agent and /agent-attach commands", async () => {
+		const { default: userAgent } = await import("../index.ts");
+		const commands: string[] = [];
+		const pi = {
+			registerCommand: (name: string) => commands.push(name),
+			registerMessageRenderer: () => undefined,
+			registerEntryRenderer: () => undefined,
+			on: () => undefined,
+			getAllTools: () => [],
+			getCommands: () => [],
+			sendMessage: () => undefined,
+			appendEntry: () => undefined,
+		} as never;
+
+		userAgent(pi);
+
+		expect(commands.sort()).toEqual(["agent", "agent-attach"]);
+	});
+});

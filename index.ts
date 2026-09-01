@@ -2,6 +2,7 @@ import type {
 	MessageEndEvent,
 	MessageEndEventResult,
 } from "@earendil-works/pi-coding-agent";
+import { handleAttachCommand } from "./attach.js";
 import { registerAgentAutocomplete } from "./autocomplete.js";
 import { createRebaseDelivery, handleAgentCommand } from "./runner.js";
 import type {
@@ -47,6 +48,22 @@ export default function userAgent(pi: ExtensionAPI): void {
 				"agent",
 				args,
 				`/agent ${args}`.trim(),
+				ctx,
+			);
+		},
+	});
+
+	pi.registerCommand("agent-attach", {
+		description: "Reattach a detached agent session by id, back into the widget",
+		handler: async (args, ctx) => {
+			mainSessionContext = ctx;
+			await handleAttachCommand(
+				pi,
+				runningAgents,
+				widget,
+				() => shuttingDown,
+				() => ++nextAgentNumber,
+				args,
 				ctx,
 			);
 		},

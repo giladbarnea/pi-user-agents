@@ -449,29 +449,9 @@ async function runAgentLifecycle(
 			widget,
 		);
 		unsubscribe = subscribeToChildSession(session, runningAgent, widget);
-		await runChildTurns(pi, isShuttingDown, task, session, runningAgent, widget);
+		await runChildTurns(pi, isShuttingDown, DISPATCH_PREAMBLE + task, session, runningAgent, widget);
 	} catch (error) {
-		if (runningAgent.aborted) {
-			logSteering(runningAgent.id, "agent-aborted");
-			return;
-		}
-		const message = errorMessage(error);
-		logSteering(runningAgent.id, "agent-error", { error: message });
-		runningAgent.status = "error";
-		runningAgent.completedAt = Date.now();
-		runningAgent.error = message;
-		if (runningAgent.notifyMainAgent && isShuttingDown()) {
-			runningAgent.mainContextState = "separate";
-			return;
-		}
-		const resultMessage = buildAgentResultMessage(
-			runningAgent,
-			{ ok: false, error: message },
-			{ display: runningAgent.notifyMainAgent },
-		);
-		widget.addCompleted(runningAgent, resultMessage, { squashable: !runningAgent.notifyMainAgent });
-		if (postUserAgentResult(pi, isShuttingDown, runningAgent.notifyMainAgent, resultMessage))
-			runningAgent.status = "posted";
+		reportAgentFailure(pi, isShuttingDown, runningAgent, widget, error);
 	} finally {
 		unsubscribe?.();
 		if (session) {
@@ -481,16 +461,51 @@ async function runAgentLifecycle(
 	}
 }
 
-/** Run turns on an initialized child session until it posts, retires, or shuts down. */
+/** Settle a failed lifecycle: record the error and post the error card, unless the user aborted. */
+export function reportAgentFailure(
+	pi: ExtensionAPI,
+	isShuttingDown: () => boolean,
+	runningAgent: RunningAgent,
+	widget: UserAgentWidget,
+	error: unknown,
+): void {
+	if (runningAgent.aborted) {
+		logSteering(runningAgent.id, "agent-aborted");
+		return;
+	}
+	const message = errorMessage(error);
+	logSteering(runningAgent.id, "agent-error", { error: message });
+	runningAgent.status = "error";
+	runningAgent.completedAt = Date.now();
+	runningAgent.error = message;
+	if (runningAgent.notifyMainAgent && isShuttingDown()) {
+		runningAgent.mainContextState = "separate";
+		return;
+	}
+	const resultMessage = buildAgentResultMessage(
+		runningAgent,
+		{ ok: false, error: message },
+		{ display: runningAgent.notifyMainAgent },
+	);
+	widget.addCompleted(runningAgent, resultMessage, { squashable: !runningAgent.notifyMainAgent });
+	if (postUserAgentResult(pi, isShuttingDown, runningAgent.notifyMainAgent, resultMessage))
+		runningAgent.status = "posted";
+}
+
+/** Every dispatch prefixes its task with this; attach recognizes it as the child's dispatch boundary. */
+export const DISPATCH_PREAMBLE =
+	"You are running in an ephemeral, forked background process now, concurrently with the main session. ";
+
+/** Run turns on an initialized child session until it posts, retires, or shuts down. The initial instruction is sent verbatim. */
 export async function runChildTurns(
 	pi: ExtensionAPI,
 	isShuttingDown: () => boolean,
-	task: string,
+	initialInstruction: string,
 	session: AgentSession,
 	runningAgent: RunningAgent,
 	widget: UserAgentWidget,
 ): Promise<void> {
-	let instruction = `You are running in an ephemeral, forked background process now, concurrently with the main session. ${task}`;
+	let instruction = initialInstruction;
 	while (true) {
 		const turnMessageStart = session.agent.state.messages.length;
 		if (!runningAgent.interruptRequested) {
@@ -745,7 +760,7 @@ export function subscribeToChildSession(
 	});
 }
 
-function assistantText(message: Extract<AgentMessage, { role: "assistant" }>): string {
+export function assistantText(message: Extract<AgentMessage, { role: "assistant" }>): string {
 	return message.content
 		.filter((part) => part.type === "text")
 		.map((part) => part.text)

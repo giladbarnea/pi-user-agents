@@ -67,6 +67,14 @@ The file itself appears on the child's first assistant message (`_persist` defer
 
 `d` `d` ends the live child session and drops its widget row. The session file is untouched, and the transcript gets a `pi-user-agents-detached` custom entry naming the session id so it can be resumed later. Both detach paths funnel through `closeRunning` and `removeCompleted`, which is where the announcement is made; squashing and session shutdown deliberately do not announce.
 
+## Attaching
+
+`/agent-attach <session-id>` reverses a detach. The id (or a unique prefix) resolves against file names in pi's default session directory for the cwd — the directory every dispatch creates children in — because `SessionManager.list()` would read every session file whole, gigabytes in a mature project. The authority for "is a child of this session" is the child file's header: its `parentSession` path must equal the main session's file. That is the same field `/fork` writes, so a fork of the main session attaches too.
+
+Reattachment is pi's own resume path: `SessionManager.open` plus `createAgentSessionFromServices` on a non-empty manager restores the messages, model, and thinking level from the child's file (`createAgentSession` takes the has-existing-session branch). The dispatch preamble — built at the dispatch call site, sent verbatim by `runChildTurns` — doubles as the boundary marker: `splitAtDispatchBoundary` finds the first user message carrying it and recovers the plain task, the child's own conversation for the overlay, and the inherited base whose fingerprint re-arms the rebase fast-forward. Without a recognizable boundary (a fork child, or a child whose compaction summarized it away) the whole context attaches and the base is a sentinel that never matches, so `r` stays withheld.
+
+The attached agent parks idle first (`runAttachedTurns` waits for an instruction before running the shared turn loop), and its latest persisted response seeds `pendingSquashMessage`, so steering, `s`, and `r` work immediately without a new turn. Both success states end with a "View agent?" confirmation that opens the overlay; a session that already has a widget row — live or completed — short-circuits to that confirmation and nothing else, which is what makes the command idempotent.
+
 ## Runtime sharing
 
 Child agent sessions share the parent's `ModelRuntime` instance. This is critical because extension-registered providers (like `claude-bridge`) use a global `Symbol.for` dedup guard — they register once per process and skip subsequent loads. A child session with its own fresh runtime would never receive the provider, leaving it without auth for bridge-backed models.

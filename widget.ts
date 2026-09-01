@@ -266,6 +266,21 @@ export class UserAgentWidget {
 		this.update();
 	}
 
+	/** Session ids with a live row or completed card, matched by exact id or prefix. */
+	matchAttachedSessionIds(query: string): string[] {
+		return this.entries()
+			.map((entry) => entry.agent.sessionId)
+			.filter((sessionId) => sessionId.startsWith(query));
+	}
+
+	/** Open the overlay of the row holding this session, as if the user selected it. */
+	openViewer(sessionId: string): boolean {
+		const entry = this.entries().find((candidate) => candidate.agent.sessionId === sessionId);
+		if (!entry) return false;
+		this.openSelected(entry.agent);
+		return true;
+	}
+
 	private clampSelection(): void {
 		const total = this.entries().length;
 		if (total === 0) {
