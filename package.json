@@ -1,6 +1,6 @@
 {
   "name": "@giladbarnea/pi-user-agents",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Run, view, and control background Pi agents.",
   "keywords": [
     "pi-package",
