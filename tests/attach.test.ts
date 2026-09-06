@@ -337,7 +337,7 @@ describe("runAttachedTurns — an attached agent binds, parks, then behaves like
 		expect(counters.unsubscribed).toBe(1);
 	});
 
-	test("resume prompts the child with the instruction verbatim and posts a TUI-only result card", async () => {
+	test("resume prompts the child verbatim and keeps the response in the widget", async () => {
 		const prompts: string[] = [];
 		const session = fakeSession(prompts);
 		const agent = attachedAgent(session);
@@ -363,13 +363,13 @@ describe("runAttachedTurns — an attached agent binds, parks, then behaves like
 		]);
 		expect(agent.status).toBe("idle");
 		expect(agent.responseText).toBe("answer to: dig deeper into the flaky test");
-		expect(entries, "Expected the turn result as a TUI-only card").toHaveLength(1);
+		expect(entries, "Expected no transcript card after the resumed turn").toEqual([]);
 
 		agent.retire?.();
 		await lifecycle;
 	});
 
-	test("a turn failure settles through the shared error path: error status and an error card", async () => {
+	test("a turn failure keeps its error in the widget without a transcript card", async () => {
 		const session = {
 			isStreaming: false,
 			agent: { state: { messages: [] } },
@@ -400,11 +400,11 @@ describe("runAttachedTurns — an attached agent binds, parks, then behaves like
 		agent.resume?.("go");
 		await lifecycle;
 
-		expect(agent.status).toBe("posted");
+		expect(agent.status).toBe("error");
 		expect(agent.error).toBe("provider exploded");
 		expect(completed).toHaveLength(1);
 		expect(completed[0]?.details.ok).toBe(false);
-		expect(entries).toHaveLength(1);
+		expect(entries, "Expected no transcript error card").toEqual([]);
 	});
 
 	test("a bind failure settles through the same error path instead of stranding the row", async () => {
@@ -444,10 +444,10 @@ describe("runAttachedTurns — an attached agent binds, parks, then behaves like
 		expect(outcome, "Expected a bind failure to end the lifecycle, not strand an idle row").toBe(
 			"settled",
 		);
-		expect(agent.status).toBe("posted");
+		expect(agent.status).toBe("error");
 		expect(agent.error).toBe("extension bind exploded");
 		expect(completed).toHaveLength(1);
-		expect(entries).toHaveLength(1);
+		expect(entries, "Expected no transcript error card").toEqual([]);
 	});
 });
 

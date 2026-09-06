@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { contextMeterColor, renderContextMeter } from "../context-meter.ts";
 import type {
@@ -532,6 +532,7 @@ type IdleHarness = {
 	steeredMessages: string[];
 	resumedInstructions: string[];
 	retireCalls: () => number;
+	renderRequests: () => number;
 	foregroundCalls: Array<{ color: string; text: string }>;
 	settleViewer: () => Promise<void>;
 };
@@ -615,6 +616,7 @@ function buildIdleHarness(
 		rebaseDelivery,
 	);
 	const foregroundCalls: Array<{ color: string; text: string }> = [];
+	let renderRequests = 0;
 	const theme = {
 		fg: (color: string, text: string) => {
 			foregroundCalls.push({ color, text });
@@ -627,7 +629,7 @@ function buildIdleHarness(
 	} as unknown as Theme;
 	const tui = {
 		terminal: { columns: 120, rows: 20 },
-		requestRender: () => undefined,
+		requestRender: () => { renderRequests += 1; },
 	} as unknown as TUI;
 	let terminalInput = (_data: string): unknown => undefined;
 	let widgetComponent: Component | undefined;
@@ -682,6 +684,7 @@ function buildIdleHarness(
 		steeredMessages,
 		resumedInstructions,
 		retireCalls: () => retired,
+		renderRequests: () => renderRequests,
 		foregroundCalls,
 		settleViewer: async () => {
 			await viewerDone;
@@ -690,6 +693,75 @@ function buildIdleHarness(
 }
 
 describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
+	test("reuses an unchanged preview and refreshes it for content, width, and theme invalidation", () => {
+		const harness = buildIdleHarness();
+		harness.agent.responseText = "`cached-preview`";
+		const component = harness.widgetComponent();
+		const previewCalls = () => harness.foregroundCalls.filter(({ color }) => color === "mdCode").length;
+		expect(component.render(120).join("\n")).toContain("cached-preview");
+		const firstCalls = previewCalls();
+		expect(firstCalls).toBeGreaterThan(0);
+		component.render(120);
+		expect(previewCalls(), "Repeated draws must reuse the formatted preview").toBe(firstCalls);
+		component.render(80);
+		expect(previewCalls()).toBeGreaterThan(firstCalls);
+		const widthCalls = previewCalls();
+		component.invalidate();
+		component.render(80);
+		expect(previewCalls(), "Theme invalidation must discard the formatted preview").toBeGreaterThan(widthCalls);
+		harness.agent.responseText = "`changed-preview`";
+		expect(component.render(80).join("\n")).toContain("changed-preview");
+		harness.agent.status = "running";
+		harness.agent.latestFinalizedMessage = {
+			role: "user", content: "`first-message`", timestamp: 1,
+		};
+		expect(component.render(80).join("\n")).toContain("first-message");
+		const activeCalls = previewCalls();
+		component.render(80);
+		expect(previewCalls()).toBe(activeCalls);
+		harness.agent.latestFinalizedMessage = {
+			role: "user", content: "`other-message`", timestamp: 2,
+		};
+		expect(component.render(80).join("\n")).toContain("other-message");
+		harness.widget.dispose();
+	});
+
+	test("animates only active turns at 200 ms and restarts after an idle turn", () => {
+		const scheduled = new Map<ReturnType<typeof setInterval>, { callback: () => void; period: number | undefined }>();
+		let nextTimer = 0;
+		const intervals = spyOn(globalThis, "setInterval").mockImplementation((callback, period) => {
+			const timer = ++nextTimer as unknown as ReturnType<typeof setInterval>;
+			scheduled.set(timer, { callback: callback as () => void, period });
+			return timer;
+		});
+		const cancellations = spyOn(globalThis, "clearInterval").mockImplementation((timer) => {
+			scheduled.delete(timer as ReturnType<typeof setInterval>);
+		});
+		const harness = buildIdleHarness();
+		try {
+			harness.widget.ensureTimer();
+			expect(scheduled.size, "Idle agents must not schedule periodic redraws").toBe(0);
+			harness.agent.status = "running";
+			harness.widget.update();
+			expect([...scheduled.values()].map(({ period }) => period)).toEqual([200]);
+			const requests = harness.renderRequests();
+			for (const timer of scheduled.values()) timer.callback();
+			expect(harness.renderRequests()).toBe(requests + 1);
+			harness.agent.status = "idle";
+			harness.widget.update();
+			expect(scheduled.size).toBe(0);
+			harness.agent.status = "running";
+			harness.widget.update();
+			expect([...scheduled.values()].map(({ period }) => period)).toEqual([200]);
+			harness.widget.dispose();
+			expect(scheduled.size).toBe(0);
+		} finally {
+			harness.widget.dispose();
+			intervals.mockRestore();
+			cancellations.mockRestore();
+		}
+	});
+
 	test("renders an idle agent as a green-checked turn-complete entry with its response preview", () => {
 		const harness = buildIdleHarness();
 		const lines = harness.widgetComponent().render(120);

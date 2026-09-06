@@ -81,7 +81,7 @@ Press `←` or `↓` from the editor to focus the widget, pick an agent, press `
 
 A background agent is not fire-and-forget — it's a session you can talk to.
 
-Press `Enter` in the overlay to open the steer composer. Mid-turn, your message queues in after the current tool batch, before the next model call — exactly like steering the main agent. After the turn completes, the same composer starts **another turn** on the same live session. Follow up as many times as you need; every completed turn posts its own result card.
+Press `Enter` in the overlay to open the steer composer. Mid-turn, your message queues in after the current tool batch, before the next model call — exactly like steering the main agent. After the turn completes, the same composer starts **another turn** on the same live session. Follow up as many times as you need. Read each response in the agent overlay.
 
 `Ctrl+x` interrupts only the current turn — the agent goes idle and stays available for steering, squashing, or detaching. In fact, nothing ends an agent except you: pressing `d` twice, squashing or rebasing it, or ending the Pi session.
 
@@ -101,14 +101,14 @@ Or take it back as a background agent instead: `/agent-attach 0199c4f2` puts the
 
 This is what makes user agents different from subagents: **by default, the main agent never learns any of this happened.**
 
-Each completed turn posts a result card into your transcript — metadata, a collapsed preview, expandable to the full Markdown response. The card is TUI-only: you read it, expand it, copy it, and the main agent's context is untouched. Ask an agent ten questions and your main agent's token budget doesn't move.
+Completed responses stay in the agent overlay, accessible through the widget below the editor. Completion adds no transcript card. Ask an agent ten questions and your main agent's token budget does not move.
 
 When a result does belong in the main conversation, squash it in:
 
 - Dispatch with `-s`/`--squash` and the result is delivered automatically on completion.
 - Or press `s` in the overlay of any completed agent, whenever you decide it earned its place.
 
-A squash delivers a compact record, not a transcript dump: every message you sent the agent and the final answer to each — no thinking, no tool traffic. The record is rebuilt from the agent's full history at squash time, so early turns survive even after the agent compacts its own context. If the main agent is mid-turn, the record is steered in; if idle, it triggers a turn. A squashed agent retires; its overlay stays readable.
+A squash delivers a compact record, not a transcript dump: every message you sent the agent and the final answer to each — no thinking, no tool traffic. The record is rebuilt from the agent's full history at squash time, so early turns survive even after the agent compacts its own context. If the main agent is mid-turn, the record is steered in; if idle, it triggers a turn. Squash adds no transcript card. A squashed agent retires; its overlay stays readable.
 
 ### 6. Or rebase — rewrite history
 
@@ -148,7 +148,7 @@ And what you do type by hand is checked live, as you type. Valid options and val
 
 Every dispatch writes a real session file, exactly like the one you're sitting in, so dispatched agents show up in `/resume` and `pi -r` alongside your own sessions.
 
-Result cards persist across session reloads; the widget doesn't. After a reload you keep every card, and every agent's session is still on disk — but the steerable rows are gone. Reach them with `/resume`.
+The widget does not survive a session reload. Each agent's session remains on disk, accessible through `/resume` or `/agent-attach`. Completion cards from older versions stay hidden.
 
 ### 🌡️ A context meter in one cell
 

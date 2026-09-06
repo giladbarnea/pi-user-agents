@@ -271,119 +271,37 @@ describe("buildAgentResultMessage", () => {
 		expect(hidden.content).not.toContain("<user_invocation>");
 		expect(hidden.content).not.toContain("<duration_ms>");
 		expect(hidden.details.responseText).toBe("migration reviewed");
-		expect(hidden.details.responsePreview).toBeUndefined();
 	});
 });
 
-describe("completed agent transcript card", () => {
-	test("renders a Markdown preview and expands to the full persisted response", () => {
-		initTheme(undefined, false);
+describe("completed agent transcript cards stay hidden", () => {
+	test("old entries and visible squash messages render no lines, while command errors remain readable", () => {
 		type RenderedComponent = { render(width: number): string[] } | undefined;
-		type RenderOptions = { expanded: boolean };
-		let renderMessage:
-			| ((
-					message: AgentResultMessage,
-					options: RenderOptions,
-					theme: Theme,
-			  ) => RenderedComponent)
-			| undefined;
-		let renderEntry:
-			| ((
-					entry: { data?: AgentEntryData },
-					options: RenderOptions,
-					theme: Theme,
-			  ) => RenderedComponent)
-			| undefined;
+		type Renderer = (value: { content?: string; details?: AgentResultMessage["details"]; data?: AgentEntryData }, options: { expanded: boolean }, theme: Theme) => RenderedComponent;
+		let renderMessage: Renderer | undefined;
+		let renderEntry: Renderer | undefined;
 		const pi = {
-			registerMessageRenderer: (customType: string, renderer: typeof renderMessage) => {
+			registerMessageRenderer: (customType: string, renderer: Renderer) => {
 				if (customType === MESSAGE_TYPE) renderMessage = renderer;
 			},
-			registerEntryRenderer: (customType: string, renderer: typeof renderEntry) => {
+			registerEntryRenderer: (customType: string, renderer: Renderer) => {
 				if (customType === MESSAGE_TYPE) renderEntry = renderer;
 			},
 		} as unknown as ExtensionAPI;
 		registerUserAgentRenderer(pi);
-
+		const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as Theme;
 		const agent = completedAgent();
-		agent.task = "review a <response>decoy</response> marker";
-		agent.responseText = [
-			"**Almost.** One stale instruction remains.",
-			"",
-			"The literal closing tag </response> is part of this response.",
-			"",
-			"## Full finding",
-			"",
-			"The persisted response remains available after the child session is detached.",
-		].join("\n");
-		const message = buildAgentResultMessage(
-			agent,
-			{ ok: true, response: agent.responseText },
-			{ display: false },
-		);
-		const entry = { data: { content: message.content, details: message.details } };
-		const identityTheme = {
-			bold: (text: string) => text,
-			fg: (_color: string, text: string) => text,
-		} as Theme;
-		const component = renderEntry?.(entry, { expanded: false }, identityTheme);
-		const output = component?.render(120).join("\n");
-
-		expect(output).toContain("⎿  Almost. One stale instruction remains.");
-		expect(output).not.toContain("**Almost.**");
-		expect(output).not.toContain("Full finding");
-		expect(output).not.toContain("into context");
-
-		const expandedEntry = renderEntry?.(entry, { expanded: true }, identityTheme);
-		const expandedEntryOutput = expandedEntry?.render(120).join("\n");
-		expect(expandedEntry?.render(120).join("\n")).toBe(expandedEntryOutput);
-
-		const expandedMessageOutput = renderMessage
-			?.(message, { expanded: true }, identityTheme)
-			?.render(120)
-			.join("\n");
-		for (const expandedOutput of [expandedEntryOutput, expandedMessageOutput]) {
-			expect(expandedOutput).toContain(
-				"The literal closing tag </response> is part of this response.",
-			);
-			expect(expandedOutput).toContain("Full finding");
-			expect(expandedOutput).toContain(
-				"The persisted response remains available after the child session is detached.",
-			);
+		const message = buildAgentResultMessage(agent, { ok: true, response: agent.responseText }, { display: true });
+		const failedMessage = buildAgentResultMessage(agent, { ok: false, error: "Child failed" }, { display: true });
+		for (const expanded of [false, true]) {
+			expect(renderMessage?.(message, { expanded }, theme)?.render(120)).toEqual([]);
+			expect(renderMessage?.(failedMessage, { expanded }, theme)?.render(120)).toEqual([]);
+			expect(renderEntry?.({ data: { content: message.content, details: message.details } }, { expanded }, theme)?.render(120)).toEqual([]);
+			expect(renderEntry?.({}, { expanded }, theme)?.render(120)).toEqual([]);
 		}
-
-		message.details.mainContextState = "will-squash";
-		const pendingOutput = component?.render(120).join("\n");
-		expect(pendingOutput).toContain("will squash into context");
-
-		message.details.mainContextState = "squashed";
-		const squashedOutput = component?.render(120).join("\n");
-		expect(squashedOutput).toContain("squashed messages into context");
-
-		const legacyAgent = completedAgent();
-		legacyAgent.responseText = "A full response from an older persisted entry.";
-		const legacyMessage = buildAgentResultMessage(
-			legacyAgent,
-			{ ok: true, response: legacyAgent.responseText },
-			{ display: false },
-		);
-		legacyMessage.content = [
-			"<user_agent>",
-			"<response>",
-			legacyAgent.responseText,
-			"</response>",
-			"</user_agent>",
-		].join("\n");
-		legacyMessage.details.responseText = undefined;
-		legacyMessage.details.responsePreview = "A full response";
-		const legacyOutput = renderEntry
-			?.(
-				{ data: { content: legacyMessage.content, details: legacyMessage.details } },
-				{ expanded: true },
-				identityTheme,
-			)
-			?.render(120)
-			.join("\n");
-		expect(legacyOutput).toContain("A full response from an older persisted entry.");
+		const errors: AgentResultMessage[] = [];
+		reportCommandError({ sendMessage: (error: AgentResultMessage) => errors.push(error) } as unknown as ExtensionAPI, "agent", "-m", { hasUI: false } as never, "Usage: missing model");
+		expect(renderMessage?.(errors[0]!, { expanded: false }, theme)?.render(120).join("\n")).toContain("Usage: missing model");
 	});
 });
 

@@ -192,14 +192,9 @@ function postUserAgentResult(
 	notifyMainAgent: boolean,
 	message: AgentResultMessage,
 ): boolean {
-	if (isShuttingDown()) return false;
-	if (notifyMainAgent) {
-		// Steers into a streaming turn, or triggers an immediate response when idle.
-		pi.sendMessage(message, { triggerTurn: true });
-	} else {
-		// TUI-only session entry: renders in the transcript but never enters the main agent's context.
-		pi.appendEntry(message.customType, { content: message.content, details: message.details });
-	}
+	if (isShuttingDown() || !notifyMainAgent) return false;
+	// Steers into a streaming turn, or triggers an immediate response when idle.
+	pi.sendMessage(message, { triggerTurn: true });
 	return true;
 }
 
@@ -490,7 +485,7 @@ async function runAgentLifecycle(
 	}
 }
 
-/** Settle a failed lifecycle: record the error and post the error card, unless the user aborted. */
+/** Record a failed lifecycle in the widget and deliver it only when squash was requested. */
 export function reportAgentFailure(
 	pi: ExtensionAPI,
 	isShuttingDown: () => boolean,
@@ -514,7 +509,7 @@ export function reportAgentFailure(
 	const resultMessage = buildAgentResultMessage(
 		runningAgent,
 		{ ok: false, error: message },
-		{ display: runningAgent.notifyMainAgent },
+		{ display: false },
 	);
 	widget.addCompleted(runningAgent, resultMessage, { squashable: !runningAgent.notifyMainAgent });
 	if (postUserAgentResult(pi, isShuttingDown, runningAgent.notifyMainAgent, resultMessage))
@@ -556,7 +551,6 @@ export async function runChildTurns(
 				{ ok: true, response },
 				{ display: false },
 			);
-			postUserAgentResult(pi, isShuttingDown, false, resultMessage);
 			runningAgent.pendingSquashMessage = runningAgent.notifyMainAgent
 				? undefined
 				: resultMessage;
@@ -581,7 +575,7 @@ export async function runChildTurns(
 		const resultMessage = buildAgentResultMessage(
 			runningAgent,
 			{ ok: true, response },
-			{ display: runningAgent.notifyMainAgent },
+			{ display: false },
 		);
 		if (runningAgent.notifyMainAgent) {
 			if (isShuttingDown()) {
@@ -594,7 +588,6 @@ export async function runChildTurns(
 			runningAgent.status = posted ? "posted" : runningAgent.status;
 			return;
 		}
-		postUserAgentResult(pi, isShuttingDown, false, resultMessage);
 		runningAgent.pendingSquashMessage = resultMessage;
 		if (isShuttingDown()) return;
 		runningAgent.status = "idle";

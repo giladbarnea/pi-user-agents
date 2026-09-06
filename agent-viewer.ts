@@ -102,7 +102,14 @@ function describeAssistantPart(part: AssistantContentPart): ActivityDescription 
 
 export function renderActivity(description: ActivityDescription, width: number, theme: Theme): string {
 	if (width <= 0) return "";
-	const normalized = description.text.replace(/\s+/g, " ").trim();
+	const limit = Math.min(4096, Math.max(128, width * 4));
+	const text = description.text;
+	const bounded = text.length <= limit
+		? text
+		: description.truncation === "tail"
+			? `${text.slice(0, limit - 1)}…`
+			: `${text.slice(0, Math.ceil((limit - 1) / 2))}…${text.slice(-Math.floor((limit - 1) / 2))}`;
+	const normalized = bounded.replace(/\s+/g, " ").trim();
 	const dim = (text: string) => theme.fg("dim", text);
 	const markdown = new Markdown(normalized, 0, 0, dimMarkdownThemeFromTheme(theme), { color: dim });
 	const rendered = markdown
@@ -158,7 +165,7 @@ export class AgentViewer implements Component {
 		this.tui.requestRender(),
 	);
 	private composer: Input | undefined;
-	/** Rich tool rendering is far too costly to repeat on every 100 ms widget tick. */
+	/** Rich tool rendering is far too costly to repeat on every widget tick. */
 	private renderedContent: { key: string; lines: string[] } | undefined;
 
 	constructor(
@@ -364,7 +371,9 @@ export class AgentViewer implements Component {
 		return lines;
 	}
 
-	invalidate(): void {}
+	invalidate(): void {
+		this.renderedContent = undefined;
+	}
 
 	dispose(): void {}
 

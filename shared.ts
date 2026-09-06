@@ -98,8 +98,6 @@ export type AgentCommandDetails = {
 	toolUses?: number;
 	turnCount?: number;
 	responseText?: string;
-	/** Retained for completed entries written before responseText was persisted. */
-	responsePreview?: string;
 	error?: string;
 };
 
@@ -292,14 +290,6 @@ export function truncatePlain(text: string, length: number): string {
 			?.trim() ?? "";
 	if (line.length <= length) return line;
 	return `${line.slice(0, Math.max(0, length - 1))}…`;
-}
-
-export function extractTag(
-	content: string,
-	tag: "task" | "response" | "error" | "duration_ms",
-): string | undefined {
-	const match = content.match(new RegExp(`<${tag}>\\n?([\\s\\S]*?)\\n?</${tag}>`));
-	return match?.[1]?.trim();
 }
 
 export function escapeAttribute(value: string): string {

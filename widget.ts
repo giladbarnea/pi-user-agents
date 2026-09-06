@@ -17,6 +17,7 @@ import {
 import { renderAgentContextMeter } from "./context-meter.js";
 import { selectRebaseMessages } from "./rebase.js";
 import type {
+	AgentMessage,
 	AgentResultMessage,
 	CompletedAgent,
 	RebaseDelivery,
@@ -42,6 +43,15 @@ type UserAgentWidgetEntry =
 	| { kind: "running"; startedAt: number; agent: RunningAgent }
 	| { kind: "completed"; startedAt: number; agent: CompletedAgent };
 
+type CachedActivityPreview = {
+	source: AgentMessage | string | undefined;
+	status: RunningAgent["status"] | boolean;
+	error: string | undefined;
+	width: number;
+	theme: Theme;
+	text: string;
+};
+
 export class UserAgentWidget {
 	private ui: UIContext | undefined;
 	private frame = 0;
@@ -52,6 +62,7 @@ export class UserAgentWidget {
 	private active = false;
 	private selectedIndex = 0;
 	private viewerOpen = false;
+	private activityPreviews = new WeakMap<ViewableAgent, CachedActivityPreview>();
 	/** One confirmation slot for detaching the selected agent. */
 	private readonly detachConfirmation = new TimedConfirmation<ViewableAgent>(() => this.update());
 	private readonly completedAgents: CompletedAgent[] = [];
@@ -67,6 +78,7 @@ export class UserAgentWidget {
 		if (ui === this.ui) return;
 		this.inputUnsub?.();
 		this.ui = ui;
+		this.activityPreviews = new WeakMap();
 		this.widgetRegistered = false;
 		this.tui = undefined;
 		this.detachConfirmation.cancel();
@@ -101,12 +113,18 @@ export class UserAgentWidget {
 	}
 
 	ensureTimer(): void {
-		if (!this.ui || this.interval) return;
-		this.interval = setInterval(() => this.update(), 100);
+		const active = [...this.runningAgents].some(isLiveAgent);
+		if (!active && this.interval) {
+			clearInterval(this.interval);
+			this.interval = undefined;
+		}
+		if (!this.ui || !active || this.interval) return;
+		this.interval = setInterval(() => this.update(), 200);
 	}
 
 	update(): void {
 		if (!this.ui) return;
+		this.ensureTimer();
 		const entries = this.entries();
 		if (entries.length === 0) {
 			this.clear();
@@ -123,8 +141,7 @@ export class UserAgentWidget {
 					return {
 						render: (width: number) => this.renderWidget(width, theme),
 						invalidate: () => {
-							this.widgetRegistered = false;
-							this.tui = undefined;
+							this.activityPreviews = new WeakMap();
 						},
 					};
 				},
@@ -148,6 +165,7 @@ export class UserAgentWidget {
 		this.widgetRegistered = false;
 		this.tui = undefined;
 		this.active = false;
+		this.activityPreviews = new WeakMap();
 		this.detachConfirmation.cancel();
 	}
 
@@ -583,16 +601,30 @@ export class UserAgentWidget {
 			.join(" ");
 		const activityPrefix = `${indent}   ⎿  `;
 		const activityWidth = Math.max(0, width - visibleWidth(activityPrefix));
+		const preview = this.renderActivityPreview(agent, activityWidth, theme);
+		const activityText = ok ? preview : theme.fg("error", preview);
+		const activity = `${theme.fg("dim", indent)}   ${theme.fg("dim", "⎿  ")}${activityText}`;
+		return [truncateToWidth(header, width), truncateToWidth(activity, width)];
+	}
+
+	private renderActivityPreview(agent: ViewableAgent, width: number, theme: Theme): string {
+		const running = isRunningAgent(agent);
+		const source = isLiveAgent(agent) ? agent.latestFinalizedMessage : agent.responseText;
+		const status = running ? agent.status : agent.ok;
+		const cached = this.activityPreviews.get(agent);
+		if (
+			cached && cached.source === source && cached.status === status &&
+			cached.error === agent.error && cached.width === width && cached.theme === theme
+		) return cached.text;
 		const description = running
 			? describeActivity(agent)
 			: {
 					text: agent.ok ? agent.responseText : `Error: ${agent.error ?? "unknown"}`,
 					truncation: "tail" as const,
 				};
-		const preview = renderActivity(description, activityWidth, theme);
-		const activityText = ok ? preview : theme.fg("error", preview);
-		const activity = `${theme.fg("dim", indent)}   ${theme.fg("dim", "⎿  ")}${activityText}`;
-		return [truncateToWidth(header, width), truncateToWidth(activity, width)];
+		const text = renderActivity(description, width, theme);
+		this.activityPreviews.set(agent, { source, status, error: agent.error, width, theme, text });
+		return text;
 	}
 }
 

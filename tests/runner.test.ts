@@ -839,13 +839,14 @@ describe("waitForInstruction — idle lifecycle parking", () => {
 });
 
 describe("runChildTurns — main-context delivery", () => {
-	test("sends the given instruction to the child verbatim (the dispatch preamble is the dispatch call site's concern)", async () => {
+	test.each([false, true])("completion keeps the widget response and only squash=%s delivers hidden context", async (squash) => {
 		const prompts: string[] = [];
 		const messages: Array<Record<string, unknown>> = [];
 		const session = {
 			agent: { state: { messages } },
 			prompt: (instruction: string) => {
 				prompts.push(instruction);
+				messages.push({ role: "user", content: instruction });
 				messages.push({
 					role: "assistant",
 					content: [{ type: "text", text: "done" }],
@@ -863,7 +864,7 @@ describe("runChildTurns — main-context delivery", () => {
 			modelLabel: "model",
 			task: "plan the migration",
 			invocation: "/agent -s plan the migration",
-			notifyMainAgent: true,
+			notifyMainAgent: squash,
 			dispatchBaseFingerprint: "[]",
 			mainContextState: "will-squash",
 			status: "running",
@@ -873,19 +874,40 @@ describe("runChildTurns — main-context delivery", () => {
 			toolUses: 0,
 			turnCount: 0,
 			responseText: "",
-			conversationMessages: [],
+			conversationMessages: messages as unknown as AgentMessage[],
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
 
-		await runChildTurns(
-			{ appendEntry: () => undefined, sendMessage: () => undefined } as never,
+		const entries: unknown[] = [];
+		const deliveries: Array<{ message: AgentResultMessage; options: { triggerTurn: boolean } }> = [];
+		const lifecycle = runChildTurns(
+			{
+				appendEntry: (_type: string, data: unknown) => entries.push(data),
+				sendMessage: (message: AgentResultMessage, options: { triggerTurn: boolean }) => deliveries.push({ message, options }),
+			} as never,
 			() => false,
 			"plan the migration",
 			session,
 			agent,
 			{ update: () => undefined, addCompleted: () => undefined } as never,
 		);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		if (!squash) {
+			expect(agent.status).toBe("idle");
+			expect((agent as RunningAgent).pendingSquashMessage?.content).toContain("done");
+			(agent as RunningAgent).retire?.();
+		}
+		await lifecycle;
+		expect(entries, "Completion must not append a transcript entry").toEqual([]);
+		expect(agent.responseText).toBe("done");
+		expect(deliveries).toHaveLength(squash ? 1 : 0);
+		if (squash) {
+			expect(deliveries[0]?.message.display).toBe(false);
+			expect(deliveries[0]?.message.content).toContain("plan the migration");
+			expect(deliveries[0]?.message.content).toContain("done");
+			expect(deliveries[0]?.options).toEqual({ triggerTurn: true });
+		}
 
 		expect(
 			prompts,
@@ -973,7 +995,7 @@ describe("runChildTurns — main-context delivery", () => {
 		expect(agent.resume).toBeFunction();
 		expect(agent.retire).toBeFunction();
 		expect(agent.mainContextState).toBe("separate");
-		expect(entries).toHaveLength(1);
+		expect(entries, "Interrupted turns must not append transcript cards").toEqual([]);
 		expect(sentMessages).toEqual([]);
 
 		agent.resume?.("finish the analysis");
@@ -981,6 +1003,7 @@ describe("runChildTurns — main-context delivery", () => {
 		await lifecycle;
 
 		expect(sentMessages).toHaveLength(1);
+		expect(sentMessages[0]?.display, "Squash must reach context without a transcript card").toBe(false);
 		expect(completedMessages).toHaveLength(1);
 		expect(sentMessages[0]?.details).toMatchObject({
 			agentId: "user-1",

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Component, TUI } from "@earendil-works/pi-tui";
+import { renderActivity } from "../agent-viewer.ts";
 import type { AgentMessage, AgentStatus, RunningAgent, Theme, UIContext } from "../shared.js";
 import { UserAgentWidget } from "../widget.ts";
 
@@ -623,6 +624,24 @@ describe("overlay tool rendering — failures read as failures", () => {
 });
 
 describe("overlay tool rendering — bounded and stable", () => {
+	test("activity formatting receives bounded text and preserves the requested ends", () => {
+		const formatted: string[] = [];
+		const theme = identityTheme();
+		theme.fg = (_color, text) => { formatted.push(text); return text; };
+		const text = `HEAD ${"x".repeat(50_000)} TAIL`;
+		const tail = renderActivity({ text, truncation: "tail" }, 80, theme);
+		expect(tail).toContain("HEAD");
+		expect(tail).not.toContain("TAIL");
+		expect(Math.max(...formatted.map((part) => part.length)), "Discarded text must not reach Markdown formatting").toBeLessThanOrEqual(4096);
+		formatted.length = 0;
+		const middle = renderActivity({ text, truncation: "middle" }, 80, theme);
+		expect(middle).toContain("HEAD");
+		expect(middle).toContain("TAIL");
+		expect(middle).toContain("…");
+		expect(middle.length).toBeLessThanOrEqual(80);
+		expect(Math.max(...formatted.map((part) => part.length))).toBeLessThanOrEqual(4096);
+	});
+
 	test("a huge result does not become a huge transcript", () => {
 		const hugeOutput = Array.from({ length: 5_000 }, (_, index) => `output line ${index}`).join(
 			"\n",

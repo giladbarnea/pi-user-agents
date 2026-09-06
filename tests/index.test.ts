@@ -42,7 +42,7 @@ function completedSquash(): {
 	const message: AgentResultMessage = {
 		customType: "pi-user-agents",
 		content: "<user_agent>done</user_agent>",
-		display: true,
+		display: false,
 		details: {
 			agentId: agent.id,
 			command: agent.command,
@@ -87,6 +87,7 @@ describe("parent main-context confirmation", () => {
 
 		expect(result?.message?.role).toBe("custom");
 		if (result?.message?.role !== "custom") throw new Error("Expected a custom result message");
+		expect(result.message.display, "Squash confirmation must preserve hidden delivery").toBe(false);
 		expect(result.message.details).toMatchObject({
 			agentId: "user-1",
 			mainContextState: "squashed",
