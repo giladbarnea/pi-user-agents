@@ -181,7 +181,13 @@ function buildHarness(
 		},
 	} as unknown as UIContext;
 
-	const widget = new UserAgentWidget(new Set([agent]), () => undefined, () => undefined);
+	const widget = new UserAgentWidget(
+		new Set([agent]),
+		() => undefined,
+		() => undefined,
+		{ canDeliver: () => false, deliver: () => undefined },
+		{ available: () => false, split: () => Promise.reject(new Error("no herdr")) },
+	);
 	widget.setUI(ui);
 	widget.update();
 

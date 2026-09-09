@@ -1,7 +1,8 @@
 import type { AgentCommandName, ParsedAgentCommand } from "./shared.js";
 
 export type ValueCompletionDomain = "model" | "path" | "provider" | "thinking" | "tool";
-export type AgentOptionRole = "extension" | "forwarded" | "blocked";
+/** `inert`: forwarded to a background run, where it has no effect, and dropped from a herdr pane's Pi. */
+export type AgentOptionRole = "extension" | "forwarded" | "inert" | "blocked";
 
 export type AgentOptionDefinition = {
 	semanticId: string;
@@ -58,6 +59,7 @@ export type AgentSemanticToken = {
 export type AgentArgumentScan = {
 	isolate: boolean;
 	squash: boolean;
+	herdr: boolean;
 	forwardedArgs: string[];
 	/** Ordered, non-overlapping semantic tokens over the argument text. Prose stays untokenized. */
 	tokens: AgentSemanticToken[];
@@ -121,6 +123,14 @@ export const AGENT_OPTIONS: readonly AgentOptionDefinition[] = [
 		arity: "boolean",
 		autocomplete: true,
 		description: "Squash the completed result into the main agent context",
+	},
+	{
+		semanticId: "herdr",
+		names: ["-h", "--herdr"],
+		role: "extension",
+		arity: "boolean",
+		autocomplete: true,
+		description: "Open the agent in a new herdr pane",
 	},
 	{
 		semanticId: "provider",
@@ -303,7 +313,7 @@ function blockedOptions(): AgentOptionDefinition[] {
 		blockedOption("models", ["--models"]),
 		blockedOption("export", ["--export"]),
 		blockedOption("list-models", ["--list-models"]),
-		blockedOption("help", ["-h", "--help"]),
+		blockedOption("help", ["--help"]),
 		blockedOption("version", ["-v", "--version"]),
 	];
 }
@@ -312,7 +322,7 @@ function legacyValueOption(semanticId: string, names: readonly string[]): AgentO
 	return {
 		semanticId,
 		names,
-		role: "forwarded",
+		role: "inert",
 		arity: "value",
 		autocomplete: false,
 		description: "Recognized legacy Pi option",
@@ -323,7 +333,7 @@ function legacyBooleanOption(semanticId: string, names: readonly string[]): Agen
 	return {
 		semanticId,
 		names,
-		role: "forwarded",
+		role: "inert",
 		arity: "boolean",
 		autocomplete: false,
 		description: "Recognized legacy Pi option",
@@ -361,6 +371,7 @@ export function scanAgentArguments(
 	const forwardedArgs: string[] = [];
 	let isolate = false;
 	let squash = false;
+	let herdr = false;
 	let blocked: AgentSemanticToken | undefined;
 	let consumedOption = false;
 	let position = 0;
@@ -395,6 +406,8 @@ export function scanAgentArguments(
 			isolate = true;
 		} else if (option.semanticId === "squash") {
 			squash = true;
+		} else if (option.semanticId === "herdr") {
+			herdr = true;
 		} else if (option.arity === "value") {
 			forwardedArgs.push(option.forwardName ?? token);
 			const read = readValueSpan(args, position);
@@ -428,6 +441,7 @@ export function scanAgentArguments(
 	const scan: AgentArgumentScan = {
 		isolate,
 		squash,
+		herdr,
 		forwardedArgs,
 		tokens,
 		proseStart,
@@ -447,6 +461,29 @@ export function scanAgentArguments(
 				: token,
 		),
 	};
+}
+
+const PANE_RESOLVED_SEMANTIC_IDS: ReadonlySet<string> = new Set(["model", "provider", "thinking"]);
+
+/**
+ * The forwarded pi tokens a Pi in a herdr pane receives: without the inert options, which a
+ * background run ignores but a real pi process would obey (`--no-session`, `--fork`, …), and
+ * without model, provider, and thinking, which the pane's Pi gets explicitly or from its file.
+ * Forwarded tokens alternate option and value by declared arity, so values are never mistaken
+ * for options.
+ *
+ * @example forwardedArgsForPane(["--model", "opus", "--no-session", "--tools", "read"]) // ["--tools", "read"]
+ */
+export function forwardedArgsForPane(forwardedArgs: readonly string[]): string[] {
+	const kept: string[] = [];
+	for (let index = 0; index < forwardedArgs.length; index += 1) {
+		const option = OPTION_BY_NAME.get(forwardedArgs[index]!)!;
+		const end = option.arity === "value" ? index + 1 : index;
+		const dropped = option.role === "inert" || PANE_RESOLVED_SEMANTIC_IDS.has(option.semanticId);
+		if (!dropped) kept.push(...forwardedArgs.slice(index, end + 1));
+		index = end;
+	}
+	return kept;
 }
 
 /**
@@ -487,11 +524,16 @@ export function parseAgentCommand(args: string, command: AgentCommandName): Pars
 	}
 	if (!scan.prose.trim())
 		throw new Error(
-			`Usage: /${command} [pi options] [-m MODELNAME] [-i|--isolate] [-s|--squash] "<task>"`,
+			`Usage: /${command} [pi options] [-m MODELNAME] [-i|--isolate] [-s|--squash] [-h|--herdr] "<task>"`,
+		);
+	if (scan.herdr && scan.squash)
+		throw new Error(
+			`/${command} -h and -s conflict: an agent in a herdr pane never squashes into this context.`,
 		);
 	return {
 		isolate: scan.isolate,
 		squash: scan.squash,
+		herdr: scan.herdr,
 		forwardedArgs: scan.forwardedArgs,
 		task: scan.task,
 		warnings: scan.warnings,

@@ -8,6 +8,7 @@ import {
 import {
 	AgentViewer,
 	type AgentViewerAction,
+	type AgentViewerActions,
 	describeActivity,
 	isLiveAgent,
 	isRunningAgent,
@@ -21,6 +22,7 @@ import type {
 	AgentMessage,
 	AgentResultMessage,
 	CompletedAgent,
+	HerdrDelivery,
 	RebaseDelivery,
 	RunningAgent,
 	Theme,
@@ -29,10 +31,12 @@ import type {
 import {
 	CONFIRMATION_WINDOW_MS,
 	contextLabel,
+	errorMessage,
 	formatMs,
 	TimedConfirmation,
 	formatToolUses,
 	formatTurns,
+	herdrPaneLabel,
 	logSteering,
 	mainContextLabel,
 	MAX_WIDGET_LINES,
@@ -48,6 +52,7 @@ type UserAgentWidgetEntry =
 type CachedActivityPreview = {
 	source: AgentMessage | string | undefined;
 	status: RunningAgent["status"] | boolean;
+	herdrPane: string | undefined;
 	error: string | undefined;
 	width: number;
 	theme: Theme;
@@ -70,8 +75,11 @@ export class UserAgentWidget {
 	private viewerOpen = false;
 	private copied: { agentId: string; target: CopyTarget } | undefined;
 	private copiedTimer: ReturnType<typeof setTimeout> | undefined;
-	private rebaseWarning: { agentId: string; text: string } | undefined;
-	private rebaseWarningTimer: ReturnType<typeof setTimeout> | undefined;
+	/** A transient per-row notice explaining why an action did nothing. */
+	private warning: { agentId: string; text: string } | undefined;
+	private warningTimer: ReturnType<typeof setTimeout> | undefined;
+	/** The agent whose herdr pane is being opened right now. */
+	private herdrPending: string | undefined;
 	private activityPreviews = new WeakMap<ViewableAgent, CachedActivityPreview>();
 	/** One confirmation slot for both destructive selected-row actions. */
 	private readonly confirmation = new TimedConfirmation<string>(() => this.update());
@@ -82,6 +90,7 @@ export class UserAgentWidget {
 		private readonly sendSquashedResult: (message: AgentResultMessage) => void,
 		private readonly announceDetached: (sessionId: string) => void,
 		private readonly rebaseDelivery: RebaseDelivery,
+		private readonly herdrDelivery: HerdrDelivery,
 	) {}
 
 	setUI(ui: UIContext): void {
@@ -100,7 +109,22 @@ export class UserAgentWidget {
 		resultMessage: AgentResultMessage,
 		options: { squashable: boolean },
 	): void {
-		this.completedAgents.push({
+		this.snapshot(agent, {
+			ok: resultMessage.details.ok,
+			pendingSquashMessage: options.squashable ? resultMessage : undefined,
+		});
+	}
+
+	/** The row for an agent dispatched straight into a herdr pane: nothing ran here, so nothing squashes. */
+	addHerdrDispatch(agent: RunningAgent, paneId: string): void {
+		this.snapshot(agent, { ok: true, herdrPane: paneId });
+	}
+
+	private snapshot(
+		agent: RunningAgent,
+		outcome: { ok: boolean; pendingSquashMessage?: AgentResultMessage; herdrPane?: string },
+	): CompletedAgent {
+		const completed: CompletedAgent = {
 			id: agent.id,
 			sessionId: agent.sessionId,
 			command: agent.command,
@@ -108,8 +132,8 @@ export class UserAgentWidget {
 			task: agent.task,
 			dispatchBaseFingerprint: agent.dispatchBaseFingerprint,
 			mainContextState: agent.mainContextState,
-			pendingSquashMessage: options.squashable ? resultMessage : undefined,
-			ok: resultMessage.details.ok,
+			pendingSquashMessage: outcome.pendingSquashMessage,
+			ok: outcome.ok,
 			responseText: agent.responseText,
 			messages: structuredClone(transcriptMessages(agent)),
 			error: agent.error,
@@ -118,8 +142,11 @@ export class UserAgentWidget {
 			toolUses: agent.toolUses,
 			turnCount: agent.turnCount,
 			contextPercent: agent.session?.getContextUsage()?.percent ?? undefined,
-		});
+			herdrPane: outcome.herdrPane,
+		};
+		this.completedAgents.push(completed);
 		this.update();
+		return completed;
 	}
 
 	ensureTimer(): void {
@@ -290,6 +317,10 @@ export class UserAgentWidget {
 			this.requestRebase(selected);
 			return { consume: true };
 		}
+		if (matchesKey(data, "h")) {
+			if (selected) this.requestHerdr(selected.agent.id);
+			return { consume: true };
+		}
 		if (matchesKey(data, "d") && selected) {
 			if (!this.confirmDetach(selected.agent)) return { consume: true };
 			if (selected.kind === "running") this.closeRunning(selected.agent);
@@ -313,7 +344,7 @@ export class UserAgentWidget {
 		const reason = this.rebaseBlockReason(agentId);
 		if (reason) {
 			this.confirmation.cancel();
-			this.showRebaseWarning(agentId, `Can't rebase: ${reason}`);
+			this.showWarning(agentId, `Can't rebase: ${reason}`);
 			return;
 		}
 		if (!this.deliverableAgent(agentId)) {
@@ -328,6 +359,58 @@ export class UserAgentWidget {
 			return;
 		}
 		this.rebaseMainContext(agentId);
+	}
+
+	private requestHerdr(agentId: string): void {
+		this.openInHerdr(agentId).catch((error) =>
+			this.showWarning(agentId, `Can't open in herdr: ${errorMessage(error)}`),
+		);
+	}
+
+	/** Hand the agent's session to a Pi in a new herdr pane, then return focus to the editor. */
+	async openInHerdr(agentId: string): Promise<void> {
+		const reason = this.herdrBlockReason(agentId);
+		if (reason) throw new Error(reason);
+		this.herdrPending = agentId;
+		this.update();
+		try {
+			// The pane comes first: a herdr failure here leaves the agent untouched. Pi starts in it
+			// only after the session is free here, so the file has one writer at a time.
+			const target = this.idleAgent(agentId) ?? this.completedAgents.find((agent) => agent.id === agentId);
+			if (!target) throw new Error("the agent has no row anymore");
+			const pane = await this.herdrDelivery.split(target);
+			const snapshot = await this.releaseForHerdr(agentId);
+			await pane.start();
+			snapshot.herdrPane = pane.paneId;
+			logSteering(agentId, "opened-in-herdr", { paneId: pane.paneId });
+		} finally {
+			this.herdrPending = undefined;
+			this.update();
+		}
+		this.deactivate();
+	}
+
+	/** Why the agent cannot open in a herdr pane right now; undefined when it can. */
+	private herdrBlockReason(agentId: string): string | undefined {
+		if (!this.herdrDelivery.available()) return "Pi is not running inside a herdr pane";
+		if (this.herdrPending === agentId) return "a herdr pane is already opening";
+		const completed = this.completedAgents.find((agent) => agent.id === agentId);
+		if (completed?.herdrPane) return `already in ${herdrPaneLabel(completed.herdrPane)}`;
+		if (!completed && !this.idleAgent(agentId)) return "the agent is mid-turn (Ctrl+x interrupts it)";
+		return undefined;
+	}
+
+	/** End the agent's life here and keep its row as a snapshot; resolves once its session is disposed. */
+	private async releaseForHerdr(agentId: string): Promise<CompletedAgent> {
+		const idleAgent = this.idleAgent(agentId);
+		if (idleAgent) {
+			idleAgent.status = "posted";
+			this.retireRunning(idleAgent);
+			this.snapshot(idleAgent, { ok: true, pendingSquashMessage: idleAgent.pendingSquashMessage });
+		}
+		// The lifecycle disposes the child session asynchronously; another Pi may open the file only after that.
+		await [...this.runningAgents].find((agent) => agent.id === agentId)?.finished;
+		return this.completedAgents.find((agent) => agent.id === agentId)!;
 	}
 
 	private copyToClipboard(agentId: string, text: string, target: CopyTarget): void {
@@ -345,12 +428,12 @@ export class UserAgentWidget {
 		child.stdin?.end(text);
 	}
 
-	private showRebaseWarning(agentId: string, text: string): void {
-		this.rebaseWarning = { agentId, text };
-		if (this.rebaseWarningTimer) clearTimeout(this.rebaseWarningTimer);
-		this.rebaseWarningTimer = setTimeout(() => {
-			this.rebaseWarning = undefined;
-			this.rebaseWarningTimer = undefined;
+	private showWarning(agentId: string, text: string): void {
+		this.warning = { agentId, text };
+		if (this.warningTimer) clearTimeout(this.warningTimer);
+		this.warningTimer = setTimeout(() => {
+			this.warning = undefined;
+			this.warningTimer = undefined;
 			this.update();
 		}, CONFIRMATION_WINDOW_MS);
 		this.update();
@@ -395,21 +478,7 @@ export class UserAgentWidget {
 		void ui
 			.custom<AgentViewerAction>(
 				(tui, theme, _keybindings, done) =>
-					new AgentViewer(
-						tui,
-						agent,
-						theme,
-						done,
-						() => this.canSquashMainContext(agent.id),
-						() => this.squashMainContext(agent.id),
-						() => this.canRebaseMainContext(agent.id),
-						() => this.rebaseMainContext(agent.id),
-						() => this.rebaseBlockReason(agent.id),
-						() => this.rebaseDetachCount(agent.id),
-						() => {
-							if (isRunningAgent(agent)) this.interruptRunning(agent);
-						},
-					),
+					new AgentViewer(tui, agent, theme, done, this.viewerActions(agent)),
 				{ overlay: true, overlayOptions: { anchor: "center", width: "90%", maxHeight: "85%" } },
 			)
 			.then(
@@ -418,13 +487,34 @@ export class UserAgentWidget {
 			);
 	}
 
+	private viewerActions(agent: ViewableAgent): AgentViewerActions {
+		return {
+			canSquashMainContext: () => this.canSquashMainContext(agent.id),
+			squashMainContext: () => this.squashMainContext(agent.id),
+			canRebaseMainContext: () => this.canRebaseMainContext(agent.id),
+			rebaseMainContext: () => this.rebaseMainContext(agent.id),
+			rebaseBlockReason: () => this.rebaseBlockReason(agent.id),
+			rebaseDetachCount: () => this.rebaseDetachCount(agent.id),
+			interrupt: () => {
+				if (isRunningAgent(agent)) this.interruptRunning(agent);
+			},
+			herdrBlockReason: () => this.herdrBlockReason(agent.id),
+			openInHerdr: () => this.openInHerdr(agent.id),
+		};
+	}
+
 	/** Detaching ends the live session and leaves its session file on disk, untouched. */
 	private closeRunning(agent: RunningAgent): void {
+		this.retireRunning(agent);
+		this.announceDetached(agent.sessionId);
+		this.update();
+	}
+
+	/** End a live agent's session here; its row and any breadcrumb are the caller's business. */
+	private retireRunning(agent: RunningAgent): void {
 		agent.aborted = true;
 		void agent.session?.abort();
 		agent.retire?.();
-		this.announceDetached(agent.sessionId);
-		this.update();
 	}
 
 	private interruptRunning(agent: RunningAgent): void {
@@ -606,10 +696,10 @@ export class UserAgentWidget {
 						width,
 					),
 				);
-			} else if (selected && this.rebaseWarning?.agentId === selected.agent.id) {
-				lines.push(
-					truncateToWidth(`  ${theme.fg("warning", `⚠ ${this.rebaseWarning.text}`)}`, width),
-				);
+			} else if (selected && this.herdrPending === selected.agent.id) {
+				lines.push(truncateToWidth(`  ${theme.fg("accent", "⧉ Opening a herdr pane…")}`, width));
+			} else if (selected && this.warning?.agentId === selected.agent.id) {
+				lines.push(truncateToWidth(`  ${theme.fg("warning", `⚠ ${this.warning.text}`)}`, width));
 			} else {
 				const segments = [theme.fg("accent", "↑↓ select"), theme.fg("accent", "Enter view")];
 				if (!confirmingDetach)
@@ -627,6 +717,8 @@ export class UserAgentWidget {
 					segments.push(theme.fg("accent", "s squash"));
 				if (!confirmingDetach && selected && this.canRebaseMainContext(selected.agent.id))
 					segments.push(theme.fg("accent", "r rebase"));
+				if (!confirmingDetach && selected && this.herdrBlockReason(selected.agent.id) === undefined)
+					segments.push(theme.fg("accent", "h herdr"));
 				if (
 					!confirmingDetach &&
 					selected?.kind === "running" &&
@@ -682,27 +774,40 @@ export class UserAgentWidget {
 	): string[] {
 		const running = isRunningAgent(agent);
 		const inFlight = isLiveAgent(agent);
+		const herdrPane = running ? undefined : agent.herdrPane;
 		const ok = running ? agent.error === undefined : agent.ok;
-		const status = inFlight ? "running" : running ? "idle" : ok ? "completed" : "failed";
+		const status = inFlight
+			? "running"
+			: running
+				? "idle"
+				: herdrPane
+					? herdrPaneLabel(herdrPane)
+					: ok
+						? "completed"
+						: "failed";
 		const marker = selected ? theme.fg("accent", "⏺") : theme.fg("dim", "◯");
 		const icon = inFlight
 			? theme.fg("accent", SPINNER[this.frame % SPINNER.length])
 			: running
 				? theme.fg("muted", "◉")
-				: ok
-					? theme.fg("success", "✓")
-					: theme.fg("error", "✗");
+				: herdrPane
+					? theme.fg("muted", "⧉")
+					: ok
+						? theme.fg("success", "✓")
+						: theme.fg("error", "✗");
 		const parts = [agent.modelLabel, status];
 		if (inFlight) parts.push(contextLabel(agent.inheritedContext));
 		const mainContext = mainContextLabel(agent.mainContextState);
 		if (mainContext) parts.push(mainContext);
 		if (agent.turnCount > 0) parts.push(formatTurns(agent.turnCount));
 		if (agent.toolUses > 0) parts.push(formatToolUses(agent.toolUses));
-		parts.push(
-			formatMs(
-				running ? (agent.completedAt ?? Date.now()) - agent.turnStartedAt : agent.durationMs,
-			),
-		);
+		// An agent born in a herdr pane never ran here; a duration would be noise.
+		if (!herdrPane || agent.turnCount > 0)
+			parts.push(
+				formatMs(
+					running ? (agent.completedAt ?? Date.now()) - agent.turnStartedAt : agent.durationMs,
+				),
+			);
 
 		const header = [
 			theme.fg("dim", connector),
@@ -729,19 +834,31 @@ export class UserAgentWidget {
 		const running = isRunningAgent(agent);
 		const source = isLiveAgent(agent) ? agent.latestFinalizedMessage : agent.responseText;
 		const status = running ? agent.status : agent.ok;
+		const herdrPane = running ? undefined : agent.herdrPane;
 		const cached = this.activityPreviews.get(agent);
 		if (
 			cached && cached.source === source && cached.status === status &&
+			cached.herdrPane === herdrPane &&
 			cached.error === agent.error && cached.width === width && cached.theme === theme
 		) return cached.text;
 		const description = running
 			? describeActivity(agent)
 			: {
-					text: agent.ok ? agent.responseText : `Error: ${agent.error ?? "unknown"}`,
+					text: !agent.ok
+						? `Error: ${agent.error ?? "unknown"}`
+						: agent.responseText || (herdrPane ? `runs in ${herdrPaneLabel(herdrPane)}` : ""),
 					truncation: "tail" as const,
 				};
 		const text = renderActivity(description, width, theme);
-		this.activityPreviews.set(agent, { source, status, error: agent.error, width, theme, text });
+		this.activityPreviews.set(agent, {
+			source,
+			status,
+			herdrPane,
+			error: agent.error,
+			width,
+			theme,
+			text,
+		});
 		return text;
 	}
 }

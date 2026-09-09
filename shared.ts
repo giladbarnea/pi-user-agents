@@ -28,6 +28,8 @@ export type AgentStatus =
 export type ParsedAgentCommand = {
 	isolate: boolean;
 	squash: boolean;
+	/** -h/--herdr: open the agent in a new herdr pane instead of running it in the background. */
+	herdr: boolean;
 	/** Leading pi CLI tokens (minus the extension's own options) to forward to the child, e.g. ["--thinking", "high"]. */
 	forwardedArgs: string[];
 	task: string;
@@ -162,6 +164,8 @@ export type CompletedAgent = {
 	toolUses: number;
 	turnCount: number;
 	contextPercent?: number;
+	/** The herdr pane whose Pi now owns the session, once the agent was opened there. */
+	herdrPane?: string;
 };
 
 /** The mechanism that fast-forwards a child conversation onto the main session, injected into the widget. */
@@ -170,6 +174,21 @@ export type RebaseDelivery = {
 	canDeliver(agent: RunningAgent | CompletedAgent): boolean;
 	/** Append the processed child conversation onto the main session. */
 	deliver(agent: RunningAgent | CompletedAgent, messages: AgentMessage[]): void;
+};
+
+/** A pane split for an agent, whose Pi starts only once the agent's session is free here. */
+export type HerdrPane = {
+	paneId: string;
+	/** Start pi on the agent's session file in this pane; resolves once it is ready for input. */
+	start(): Promise<void>;
+};
+
+/** The mechanism that hands an agent's session to a Pi in a new herdr pane, injected into the widget. */
+export type HerdrDelivery = {
+	/** Whether this Pi runs inside a herdr pane, so new panes can be split from it. */
+	available(): boolean;
+	/** Resolve the agent's session file and split a pane for it; rejects before splitting when there is no file. */
+	split(agent: RunningAgent | CompletedAgent): Promise<HerdrPane>;
 };
 
 /** How long a confirmation stays armed, and how long a transient footer notice shows. */
@@ -264,6 +283,13 @@ export function mainContextLabel(state: MainContextState | undefined): string | 
 	if (state === "squashed") return "squashed messages into context";
 	if (state === "rebased") return "rebased into context";
 	return undefined;
+}
+
+/**
+ * @example herdrPaneLabel("w1:p3") // "herdr pane w1:p3"
+ */
+export function herdrPaneLabel(paneId: string): string {
+	return `herdr pane ${paneId}`;
 }
 
 export function formatTurns(turnCount: number): string {

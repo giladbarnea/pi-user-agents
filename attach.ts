@@ -1,12 +1,14 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createAgentSessionFromServices, SessionManager } from "@earendil-works/pi-coding-agent";
+import { forwardedArgsForPane } from "./command-line.js";
+import { herdrAgentName, insideHerdr, splitPane, startPi } from "./herdr.js";
 import { conversationFingerprint } from "./rebase.js";
 import {
 	assistantText,
 	buildChildResourceLoaderOptions,
 	createChildServices,
-	DISPATCH_PREAMBLE,
+	DISPATCH_PREAMBLES,
 	parseForwardedArgs,
 	reportAgentFailure,
 	resolveToolOptions,
@@ -21,6 +23,7 @@ import type {
 	DispatchRecordData,
 	ExtensionAPI,
 	ExtensionCommandContext,
+	HerdrDelivery,
 	Model,
 	RunningAgent,
 } from "./shared.js";
@@ -49,7 +52,7 @@ export type DispatchBoundary = {
 
 /**
  * Split a child's resolved context at its dispatch boundary — the first user message carrying
- * the dispatch preamble. Undefined when no message carries it (a /fork child, or a child whose
+ * a dispatch preamble. Undefined when no message carries one (a /fork child, or a child whose
  * own compaction summarized the boundary away).
  */
 export function splitAtDispatchBoundary(
@@ -58,11 +61,12 @@ export function splitAtDispatchBoundary(
 	for (const [index, message] of messages.entries()) {
 		if (message.role !== "user") continue;
 		const text = userMessageText(message);
-		if (!text.startsWith(DISPATCH_PREAMBLE)) continue;
+		const preamble = DISPATCH_PREAMBLES.find((candidate) => text.startsWith(candidate));
+		if (preamble === undefined) continue;
 		return {
 			base: messages.slice(0, index),
 			conversation: messages.slice(index),
-			task: text.slice(DISPATCH_PREAMBLE.length),
+			task: text.slice(preamble.length),
 		};
 	}
 	return undefined;
@@ -324,6 +328,33 @@ async function attachUserAgent(
 	pi.appendEntry<AttachedEntryData>(ATTACHED_ENTRY_TYPE, { sessionId: runningAgent.sessionId });
 	if (runningAgent.aborted) return;
 	await confirmViewAgent(ctx, widget, runningAgent.sessionId, "Agent attached");
+}
+
+/**
+ * The herdr mechanism: attach a child session to a Pi in a new herdr pane instead of to this
+ * process. The pane's Pi resumes the child's file with the dispatch record's options replayed as
+ * CLI flags (see `forwardedArgsForPane`); the model and thinking level come from the file, as on
+ * any resume. The file is resolved before the pane is split, so an agent without one costs no pane.
+ */
+export function createHerdrDelivery(
+	getSessionContext: () => ExtensionCommandContext | undefined,
+): HerdrDelivery {
+	return {
+		available: insideHerdr,
+		split: async (agent) => {
+			const ctx = getSessionContext();
+			if (!ctx) throw new Error("no dispatching session context");
+			const childSessionDirectory = SessionManager.create(ctx.cwd).getSessionDir();
+			const file = matchChildSessionFiles(agent.sessionId, childSessionDirectory).find(
+				(match) => match.sessionId === agent.sessionId,
+			)?.file;
+			if (!file) throw new Error("the agent has no session file yet (it has not answered)");
+			const record = readDispatchRecord(SessionManager.open(file));
+			const piArgs = [...forwardedArgsForPane(record?.forwardedArgs ?? []), "--session", file];
+			const paneId = await splitPane(ctx.cwd);
+			return { paneId, start: () => startPi(paneId, herdrAgentName(agent.sessionId), piArgs) };
+		},
+	};
 }
 
 /** The follow-up both success states share: offer to open the agent's overlay. */

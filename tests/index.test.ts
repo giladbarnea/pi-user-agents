@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { MessageEndEvent } from "@earendil-works/pi-coding-agent";
 import { confirmMainContextSquash } from "../index.ts";
-import type { AgentResultMessage, RebaseDelivery, RunningAgent } from "../shared.js";
+import type { AgentResultMessage, HerdrDelivery, RebaseDelivery, RunningAgent } from "../shared.js";
 import { UserAgentWidget } from "../widget.ts";
 
 /** A widget under test that must never rebase. */
@@ -10,6 +10,12 @@ const noRebase: RebaseDelivery = {
 	deliver: () => {
 		throw new Error("Unexpected rebase delivery");
 	},
+};
+
+/** A widget under test that runs outside herdr. */
+const noHerdr: HerdrDelivery = {
+	available: () => false,
+	split: () => Promise.reject(new Error("Unexpected herdr delivery")),
 };
 
 function completedSquash(): {
@@ -54,7 +60,7 @@ function completedSquash(): {
 			ok: true,
 		},
 	};
-	const widget = new UserAgentWidget(new Set(), () => undefined, () => undefined, noRebase);
+	const widget = new UserAgentWidget(new Set(), () => undefined, () => undefined, noRebase, noHerdr);
 	widget.addCompleted(agent, message, { squashable: false });
 	return { widget, message };
 }
@@ -98,7 +104,7 @@ describe("parent main-context confirmation", () => {
 
 	test("confirms the chat event after its widget row was removed", () => {
 		const { message } = completedSquash();
-		const emptyWidget = new UserAgentWidget(new Set(), () => undefined, () => undefined, noRebase);
+		const emptyWidget = new UserAgentWidget(new Set(), () => undefined, () => undefined, noRebase, noHerdr);
 
 		const result = confirmMainContextSquash(messageEnd(message), emptyWidget);
 

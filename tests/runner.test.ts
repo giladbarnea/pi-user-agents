@@ -1,10 +1,15 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Component, TUI } from "@earendil-works/pi-tui";
 import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { readDispatchRecord } from "../attach.ts";
 import {
 	buildChildResourceLoaderOptions,
+	flushSessionFile,
+	handleAgentCommand,
+	PANE_DISPATCH_PREAMBLE,
 	parseAgentCommand,
 	parseForwardedArgs,
 	persistMessages,
@@ -13,7 +18,19 @@ import {
 	subscribeToChildSession,
 	waitForInstruction,
 } from "../runner.ts";
-import type { AgentMessage, AgentResultMessage, RunningAgent } from "../shared.ts";
+import type {
+	AgentMessage,
+	AgentResultMessage,
+	DispatchRecordData,
+	ExtensionCommandContext,
+	RunningAgent,
+	Theme,
+	UIContext,
+} from "../shared.ts";
+import { DISPATCH_ENTRY_TYPE } from "../shared.ts";
+import { UserAgentWidget } from "../widget.ts";
+import { withTemporaryAgentDir } from "./agent-dir.ts";
+import { fakeHerdr, insideFakeHerdrPane } from "./herdr-fake.ts";
 
 /** The slice of RunningAgent that waitForInstruction reads and writes. */
 type RunningAgentForTest = Pick<
@@ -24,6 +41,7 @@ type RunningAgentForTest = Pick<
 const base = {
 	isolate: false,
 	squash: false,
+	herdr: false,
 	forwardedArgs: [] as string[],
 	warnings: [] as string[],
 };
@@ -113,6 +131,26 @@ describe("parseAgentCommand — extension options (§3a)", () => {
 			squash: true,
 			task: "do the thing",
 		});
+	});
+
+	test("consumes -h / --herdr", () => {
+		expect(parseAgentCommand("-h do the thing", "agent")).toEqual({
+			...base,
+			herdr: true,
+			task: "do the thing",
+		});
+		expect(parseAgentCommand("--herdr do the thing", "agent")).toEqual({
+			...base,
+			herdr: true,
+			task: "do the thing",
+		});
+	});
+
+	test("-h and -s conflict: an agent in a herdr pane never squashes into this context", () => {
+		expect(() => parseAgentCommand("-h -s do the thing", "agent")).toThrow(/-h and -s conflict/);
+		expect(() => parseAgentCommand("--squash --herdr do the thing", "agent")).toThrow(
+			/-h and -s conflict/,
+		);
 	});
 
 	test("consumes leading options in any order", () => {
@@ -291,7 +329,6 @@ describe("parseAgentCommand — blocked pi options (§3c, §9)", () => {
 			/does not support --list-models/,
 		);
 		expect(() => parseAgentCommand("--help", "agent")).toThrow(/does not support --help/);
-		expect(() => parseAgentCommand("-h", "agent")).toThrow(/does not support -h/);
 		expect(() => parseAgentCommand("-v", "agent")).toThrow(/does not support -v/);
 		expect(() => parseAgentCommand("--version", "agent")).toThrow(/does not support --version/);
 	});
@@ -1144,5 +1181,244 @@ describe("subscribeToChildSession — capturing a live child compaction", () => 
 			agent.conversationMessages,
 			"Expected an aborted compaction to leave no trace in the conversation",
 		).toHaveLength(1);
+	});
+});
+
+describe("flushSessionFile — a child file on disk before any assistant message", () => {
+	test("writes the header, the dispatch record, and the messages so another Pi can resume the session", () => {
+		const sessionDirectory = mkdtempSync(join(tmpdir(), "pi-user-agents-flush-"));
+		try {
+			const child = SessionManager.create("/tmp/project", sessionDirectory, {
+				parentSession: "/tmp/main.jsonl",
+			});
+			const record: DispatchRecordData = { forwardedArgs: ["--tools", "read"], task: "audit", isolate: false };
+			child.appendCustomEntry(DISPATCH_ENTRY_TYPE, record);
+			persistMessages(child, [{ role: "user", content: "inherited ask", timestamp: 1 }] as AgentMessage[], []);
+			const sessionFile = child.getSessionFile() as string;
+			expect(existsSync(sessionFile), "Fixture check: pi defers the file until an assistant message").toBe(false);
+
+			expect(flushSessionFile(child)).toBe(sessionFile);
+
+			const reopened = SessionManager.open(sessionFile);
+			expect(reopened.getSessionId()).toBe(child.getSessionId());
+			expect(reopened.getHeader()?.parentSession).toBe("/tmp/main.jsonl");
+			expect(readDispatchRecord(reopened)).toEqual(record);
+			expect(reopened.buildSessionContext().messages).toEqual([
+				{ role: "user", content: "inherited ask", timestamp: 1 },
+			] as AgentMessage[]);
+			expect(flushSessionFile(child), "Expected a second flush to leave the file alone").toBe(sessionFile);
+		} finally {
+			rmSync(sessionDirectory, { recursive: true, force: true });
+		}
+	});
+
+	test("leaves a file pi already wrote alone: an inherited assistant message flushes it at once", () => {
+		const sessionDirectory = mkdtempSync(join(tmpdir(), "pi-user-agents-flush-"));
+		try {
+			const child = SessionManager.create("/tmp/project", sessionDirectory);
+			persistMessages(
+				child,
+				[
+					{ role: "user", content: "ask", timestamp: 1 },
+					{ role: "assistant", content: [{ type: "text", text: "answer" }], timestamp: 2, stopReason: "stop" },
+				] as AgentMessage[],
+				[],
+			);
+			const sessionFile = child.getSessionFile() as string;
+			expect(existsSync(sessionFile), "Fixture check: pi writes the file on the assistant message").toBe(true);
+
+			expect(flushSessionFile(child)).toBe(sessionFile);
+
+			expect(SessionManager.open(sessionFile).buildSessionContext().messages.map((message) => message.role)).toEqual([
+				"user",
+				"assistant",
+			]);
+		} finally {
+			rmSync(sessionDirectory, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("handleAgentCommand -h — an agent born in a herdr pane", () => {
+	type Notification = { message: string; level: string };
+	const theme = {
+		fg: (_color: string, text: string) => text,
+		bold: (text: string) => text,
+		italic: (text: string) => text,
+		underline: (text: string) => text,
+		strikethrough: (text: string) => text,
+	} as unknown as Theme;
+	const tui = { terminal: { columns: 140, rows: 40 }, requestRender: () => undefined } as unknown as TUI;
+
+	async function dispatchContext(cwd: string): Promise<{
+		ctx: ExtensionCommandContext;
+		main: SessionManager;
+		notifications: Notification[];
+		widgetComponent: () => Component;
+	}> {
+		const main = SessionManager.create(cwd);
+		main.appendMessage({ role: "user", content: "main prompt", timestamp: 1 } as never);
+		main.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "main answer" }],
+			timestamp: 2,
+			stopReason: "stop",
+		} as never);
+		const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false, modelsPath: null });
+		const notifications: Notification[] = [];
+		let widgetComponent: Component | undefined;
+		const ui = {
+			notify: (message: string, level: string) => notifications.push({ message, level }),
+			onTerminalInput: () => () => undefined,
+			getEditorText: () => "",
+			setWidget: (_key: string, content: unknown) => {
+				if (typeof content === "function") widgetComponent = content(tui, theme);
+			},
+		} as unknown as UIContext;
+		const ctx = {
+			hasUI: true,
+			cwd,
+			sessionManager: main,
+			model: modelRuntime.getModel("openai-codex", "gpt-5.6-luna"),
+			modelRegistry: { runtime: modelRuntime },
+			isProjectTrusted: () => false,
+			ui,
+		} as unknown as ExtensionCommandContext;
+		return {
+			ctx,
+			main,
+			notifications,
+			widgetComponent: () => {
+				if (!widgetComponent) throw new Error("Widget did not render");
+				return widgetComponent;
+			},
+		};
+	}
+	const fakePi = {
+		getThinkingLevel: () => "high",
+		appendEntry: () => undefined,
+		sendMessage: () => undefined,
+	} as never;
+	const noopWidgetDependencies = [
+		() => undefined,
+		() => undefined,
+		{ canDeliver: () => false, deliver: () => undefined },
+		{ available: () => false, split: () => Promise.reject(new Error("no herdr")) },
+	] as const;
+
+	test("flushes the child file, starts pi on it in a new pane with the task, and keeps a row pointing at the pane", async () => {
+		await withTemporaryAgentDir(async (cwd) => {
+			const { ctx, main, notifications, widgetComponent } = await dispatchContext(cwd);
+			const runningAgents = new Set<RunningAgent>();
+			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies);
+			const fake = fakeHerdr({ layout: { paneId: "w1:p1", width: 120, height: 40 }, paneId: "w1:p2" });
+			try {
+				await insideFakeHerdrPane("w1:p1", () =>
+					handleAgentCommand(
+						fakePi,
+						runningAgents,
+						widget,
+						() => false,
+						() => 1,
+						"agent",
+						"--tools read,grep --no-session -h audit the migration",
+						"/agent --tools read,grep --no-session -h audit the migration",
+						ctx,
+					),
+				);
+
+				expect(notifications.filter(({ level }) => level === "error")).toEqual([]);
+				const start = fake.calls.find((call) => call[0] === "agent" && call[1] === "start");
+				if (!start) throw new Error(`herdr never started an agent; calls: ${JSON.stringify(fake.calls)}`);
+				const sessionFile = start[start.indexOf("--session") + 1] as string;
+				expect(start).toEqual([
+					"agent",
+					"start",
+					expect.stringMatching(/^agent-[0-9a-f]{8}-[0-9a-f]{4}$/),
+					"--kind",
+					"pi",
+					"--pane",
+					"w1:p2",
+					"--",
+					"--tools",
+					"read,grep",
+					"--provider",
+					"openai-codex",
+					"--model",
+					"gpt-5.6-luna",
+					"--thinking",
+					"high",
+					"--session",
+					sessionFile,
+					`${PANE_DISPATCH_PREAMBLE}audit the migration`,
+				]);
+				expect(start, "Expected the inert --no-session to stay off a real pi's command line").not.toContain(
+					"--no-session",
+				);
+				expect(fake.calls[1]).toEqual([
+					"pane", "split", "--current", "--direction", "right", "--cwd", cwd, "--no-focus",
+				]);
+				const child = SessionManager.open(sessionFile);
+				expect(child.getHeader()?.parentSession, "Expected the child to stay attachable").toBe(
+					main.getSessionFile(),
+				);
+				expect(readDispatchRecord(child)).toEqual({
+					forwardedArgs: ["--tools", "read,grep", "--no-session"],
+					task: "audit the migration",
+					isolate: false,
+				});
+				expect(
+					child.buildSessionContext().model,
+					"Expected the file to carry the model, or a later /agent-attach or /resume falls back to the default",
+				).toEqual({ provider: "openai-codex", modelId: "gpt-5.6-luna" });
+				expect(child.buildSessionContext().thinkingLevel).toBe("high");
+				expect(
+					child.buildSessionContext().messages.map((message) => message.role),
+					"Expected the pane's pi to start from the inherited conversation",
+				).toEqual(["user", "assistant"]);
+				expect(runningAgents.size, "Expected nothing to run in this process").toBe(0);
+				expect(notifications.at(-1)).toEqual({
+					message: "Started /agent in herdr pane w1:p2",
+					level: "info",
+				});
+				expect(widgetComponent().render(140).join("\n")).toContain("herdr pane w1:p2");
+			} finally {
+				fake.restore();
+			}
+		});
+	});
+
+	test("-h outside a herdr pane is a command error that leaves no file behind", async () => {
+		await withTemporaryAgentDir(async (cwd) => {
+			const { ctx, main, notifications } = await dispatchContext(cwd);
+			const runningAgents = new Set<RunningAgent>();
+			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies);
+			const fake = fakeHerdr({ layout: { paneId: "w1:p1", width: 120, height: 40 }, paneId: "w1:p2" });
+			delete process.env.HERDR_ENV;
+			try {
+				await handleAgentCommand(
+					fakePi,
+					runningAgents,
+					widget,
+					() => false,
+					() => 1,
+					"agent",
+					"-h audit the migration",
+					"/agent -h audit the migration",
+					ctx,
+				);
+
+				expect(notifications.at(-1)).toEqual({
+					message: "/agent -h needs Pi to run inside a herdr pane",
+					level: "error",
+				});
+				expect(fake.calls).toEqual([]);
+				expect(runningAgents.size).toBe(0);
+				const sessionFiles = readdirSync(main.getSessionDir()).filter((name) => name.endsWith(".jsonl"));
+				expect(sessionFiles, "Expected no child file: main itself has one, nothing else").toHaveLength(1);
+			} finally {
+				fake.restore();
+			}
+		});
 	});
 });

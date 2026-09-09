@@ -124,6 +124,20 @@ Rebase is a fast-forward, in the git sense: the agent forked from the main conve
 
 Delivering the rebase switches the session in place — same file, same session id, transcript redrawn — so `r` is withheld while any agent is mid-turn, and parked agents are detached first, each leaving its `Detached session …` line to `/resume` from. When siblings would be detached, the first `r` warns with the count and a second `r` confirms.
 
+### 7. Or give it a pane — herdr
+
+When Pi runs inside [herdr](https://herdr.dev), the terminal multiplexer for coding agents, an agent does not have to stay in the background at all. Press `h` on any idle or finished agent and its session opens in a new pane beside you, as an ordinary interactive Pi: same model, same thinking level, same `--tools` and the rest of its dispatch options. Talk to it there.
+
+The row stays in the widget, labeled with its new home:
+
+```
+⧉ /agent plan the next phase · luna · herdr pane w1:p3 · ↻2 · 5 tool uses · 42.1s
+```
+
+Everything the agent said before it left is still readable in the overlay, and still squashes or rebases. The pane's Pi is the session's only writer from then on; `d` on the row clears it and leaves the usual `Detached session …` line, so the id stays findable.
+
+`/agent -h <task>` skips the background entirely: the agent is born in a new pane, starts from the conversation snapshot (or from nothing with `-i`), and takes the task as its first prompt. Its row points at the pane from birth. Outside herdr, `h` explains why it did nothing and `-h` is an error.
+
 ## The mechanics
 
 ### 🎛️ Per-dispatch configuration
@@ -162,6 +176,7 @@ Everything goes through one command: `/agent [options] <task>`. Its one companio
 |---|---|
 | `-i`, `--isolate` | Start without the conversation snapshot |
 | `-s`, `--squash` | Deliver the result into the main context on completion |
+| `-h`, `--herdr` | Start the agent in a new herdr pane instead of the background |
 | `-m MODEL` | Model for this agent (alias of Pi's `--model`) |
 | *pi CLI options* | Forwarded to the agent — `--thinking`, `--tools`, `--system-prompt`, … |
 
@@ -175,14 +190,16 @@ Everything goes through one command: `/agent [options] <task>`. Its one companio
 | Overlay | `Enter` | Steer mid-turn, or start another turn when idle |
 | Widget / overlay | `s` | Squash the conversation into the main context |
 | Widget / overlay | `r` | Rebase the raw conversation into the main context (fast-forward only) |
+| Widget / overlay | `h` | Open the agent's session in a new herdr pane |
 | Widget / overlay | `c` | Copy the latest response |
 | Widget / overlay | `i` | Copy the agent's full session ID |
 | Overlay | scroll · `End` | Pause tail-following · resume it |
 
 ## Good to know
 
-- Some accepted `pi` options have no effect on a background run (the session, approval, offline, and API-key families). They parse; they just don't do anything yet.
+- Some accepted `pi` options have no effect on a background run (the session, approval, offline, and API-key families). They parse; they just don't do anything yet. A Pi in a herdr pane does not receive them.
 - `c` and `i` copy via `pbcopy`, so they are macOS-only for now.
+- `-h` and `-s` conflict: an agent in a herdr pane never squashes into this context by itself. Squash its row later instead.
 - The overlay caps very large tool outputs and omits thinking entries.
 
 ## Roadmap
@@ -192,13 +209,14 @@ Everything goes through one command: `/agent [options] <task>`. Its one companio
 - [x] Rebase: the raw conversation grafted onto the main session — fast-forward only, compaction-faithful.
 - [x] Attach: a detached session returns to the widget, restored as dispatched.
 - [x] Live syntax coloring and eager autocomplete for the `/agent` line.
+- [x] Herdr: hand an agent's session to a pane beside you, or dispatch straight into one.
 - [ ] Render an agent's compaction event in the overlay.
 - [ ] Wire the accepted-but-inert `pi` options.
 - [ ] Clipboard support beyond macOS.
 
 ## Under the hood
 
-Design notes — result delivery through the Pi SDK, the squashed-message format, the rebase and attach mechanisms, runtime sharing, model resolution, and editor internals — live in [INTERNALS.md](INTERNALS.md). The complete command grammar lives in [PARSER_SPEC.md](PARSER_SPEC.md).
+Design notes — result delivery through the Pi SDK, the squashed-message format, the rebase, attach, and herdr mechanisms, runtime sharing, model resolution, and editor internals — live in [INTERNALS.md](INTERNALS.md). The complete command grammar lives in [PARSER_SPEC.md](PARSER_SPEC.md).
 
 ---
 

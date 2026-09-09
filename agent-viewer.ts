@@ -20,6 +20,7 @@ import {
 	formatMs,
 	formatToolUses,
 	formatTurns,
+	herdrPaneLabel,
 	logSteering,
 	mainContextLabel,
 	truncatePlain,
@@ -35,6 +36,21 @@ import {
 
 export type ViewableAgent = RunningAgent | CompletedAgent;
 export type AgentViewerAction = "hide" | "detach";
+
+/** What the overlay can do to its agent, provided by the widget that owns the agent. */
+export type AgentViewerActions = {
+	canSquashMainContext(): boolean;
+	squashMainContext(): void;
+	canRebaseMainContext(): boolean;
+	rebaseMainContext(): void;
+	rebaseBlockReason(): string | undefined;
+	rebaseDetachCount(): number;
+	interrupt(): void;
+	/** Why h is withheld right now; undefined when the agent can open in a herdr pane. */
+	herdrBlockReason(): string | undefined;
+	/** Hand the session to a Pi in a new herdr pane; rejects with the reason on failure. */
+	openInHerdr(): Promise<void>;
+};
 
 export type ActivityDescription = {
 	text: string;
@@ -162,8 +178,10 @@ export class AgentViewer implements Component {
 	private lastWidth = 0;
 	private copied: CopyTarget | undefined;
 	private copiedTimer: ReturnType<typeof setTimeout> | undefined;
-	private rebaseWarning: string | undefined;
-	private rebaseWarningTimer: ReturnType<typeof setTimeout> | undefined;
+	/** A transient footer notice explaining why an action did nothing. */
+	private warning: string | undefined;
+	private warningTimer: ReturnType<typeof setTimeout> | undefined;
+	private herdrPending = false;
 	/** One confirmation slot for both destructive overlay actions. */
 	private readonly confirmation = new TimedConfirmation<"detach" | "rebase">(() =>
 		this.tui.requestRender(),
@@ -177,19 +195,13 @@ export class AgentViewer implements Component {
 		private readonly agent: ViewableAgent,
 		private readonly theme: Theme,
 		private readonly done: (result: AgentViewerAction) => void,
-		private readonly canSquashMainContext: () => boolean,
-		private readonly squashMainContext: () => void,
-		private readonly canRebaseMainContext: () => boolean,
-		private readonly rebaseMainContext: () => void,
-		private readonly rebaseBlockReason: () => string | undefined,
-		private readonly rebaseDetachCount: () => number,
-		private readonly interrupt: () => void,
+		private readonly actions: AgentViewerActions,
 	) {}
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "ctrl+x") && isLiveAgent(this.agent)) {
 			this.confirmation.cancel();
-			this.interrupt();
+			this.actions.interrupt();
 			this.tui.requestRender();
 			return;
 		}
@@ -220,28 +232,32 @@ export class AgentViewer implements Component {
 			this.copyToClipboard(this.agent.sessionId, "session-id");
 			return;
 		}
-		if (matchesKey(data, "s") && this.canSquashMainContext()) {
-			this.squashMainContext();
+		if (matchesKey(data, "s") && this.actions.canSquashMainContext()) {
+			this.actions.squashMainContext();
 			this.tui.requestRender();
 			return;
 		}
 		if (matchesKey(data, "r")) {
-			if (this.canRebaseMainContext()) {
-				if (this.rebaseDetachCount() > 0 && !this.confirmation.press("rebase")) {
+			if (this.actions.canRebaseMainContext()) {
+				if (this.actions.rebaseDetachCount() > 0 && !this.confirmation.press("rebase")) {
 					this.tui.requestRender();
 					return;
 				}
 				// Close the overlay: the payoff is the rebased conversation now sitting in the main transcript.
-				this.rebaseMainContext();
+				this.actions.rebaseMainContext();
 				this.done("hide");
 				return;
 			}
 			this.confirmation.cancel();
-			const reason = this.rebaseBlockReason();
+			const reason = this.actions.rebaseBlockReason();
 			if (reason) {
-				this.showRebaseWarning(`Can't rebase: ${reason}`);
+				this.showWarning(`Can't rebase: ${reason}`);
 				return;
 			}
+		}
+		if (matchesKey(data, "h")) {
+			this.requestHerdr();
+			return;
 		}
 		const viewport = this.viewportHeight();
 		const maxScroll = Math.max(
@@ -291,7 +307,16 @@ export class AgentViewer implements Component {
 					: this.agent.durationMs,
 			),
 		);
-		const status = live ? "running" : idle ? "idle" : failed ? "failed" : "completed";
+		const herdrPane = running ? undefined : this.agent.herdrPane;
+		const status = live
+			? "running"
+			: idle
+				? "idle"
+				: herdrPane
+					? herdrPaneLabel(herdrPane)
+					: failed
+						? "failed"
+						: "completed";
 		const metadata = [
 			th.fg("dim", this.agent.modelLabel),
 			renderAgentContextMeter(this.agent, th),
@@ -335,7 +360,7 @@ export class AgentViewer implements Component {
 				),
 			);
 		} else if (this.confirmation.isArmedOn("rebase")) {
-			const detachCount = this.rebaseDetachCount();
+			const detachCount = this.actions.rebaseDetachCount();
 			lines.push(
 				row(
 					th.fg(
@@ -344,8 +369,10 @@ export class AgentViewer implements Component {
 					),
 				),
 			);
-		} else if (this.rebaseWarning) {
-			lines.push(row(th.fg("warning", `⚠ ${this.rebaseWarning}`)));
+		} else if (this.herdrPending) {
+			lines.push(row(th.fg("accent", "⧉ Opening a herdr pane…")));
+		} else if (this.warning) {
+			lines.push(row(th.fg("warning", `⚠ ${this.warning}`)));
 		} else {
 			const scrollPct =
 				content.length <= viewport
@@ -366,10 +393,12 @@ export class AgentViewer implements Component {
 							: th.fg("dim", "c copy · i ID"),
 					th.fg("dim", "↑↓ scroll"),
 					th.fg("dim", "PgUp/PgDn"),
-					this.canSquashMainContext() ? th.fg("dim", "s squash") : "",
-					this.canRebaseMainContext() ? th.fg("dim", "r rebase") : "",
+					this.actions.canSquashMainContext() ? th.fg("dim", "s squash") : "",
+					this.actions.canRebaseMainContext() ? th.fg("dim", "r rebase") : "",
+					this.actions.herdrBlockReason() === undefined ? th.fg("dim", "h herdr") : "",
 					isLiveAgent(this.agent) ? th.fg("dim", "Ctrl+x interrupt") : "",
 					mainContext ? th.fg("dim", mainContext) : "",
+					herdrPane ? th.fg("dim", herdrPaneLabel(herdrPane)) : "",
 					isLiveAgent(this.agent) ? th.fg("dim", "Esc hide") : "",
 					th.fg(
 						this.confirmation.isArmedOn("detach") ? "error" : "dim",
@@ -389,15 +418,34 @@ export class AgentViewer implements Component {
 
 	dispose(): void {}
 
-	/** Surface why r did nothing, in the footer, for a few seconds. Memory-only, like `✓ copied`. */
-	private showRebaseWarning(warning: string): void {
-		this.rebaseWarning = warning;
-		if (this.rebaseWarningTimer) clearTimeout(this.rebaseWarningTimer);
-		this.rebaseWarningTimer = setTimeout(() => {
-			this.rebaseWarning = undefined;
+	/** Surface why a key did nothing, in the footer, for a few seconds. Memory-only, like `✓ copied`. */
+	private showWarning(warning: string): void {
+		this.warning = warning;
+		if (this.warningTimer) clearTimeout(this.warningTimer);
+		this.warningTimer = setTimeout(() => {
+			this.warning = undefined;
 			this.tui.requestRender();
 		}, CONFIRMATION_WINDOW_MS);
 		this.tui.requestRender();
+	}
+
+	private requestHerdr(): void {
+		if (this.herdrPending) return;
+		const reason = this.actions.herdrBlockReason();
+		if (reason) {
+			this.showWarning(`Can't open in herdr: ${reason}`);
+			return;
+		}
+		this.herdrPending = true;
+		this.tui.requestRender();
+		this.actions.openInHerdr().then(
+			// Close the overlay: the payoff is the pane now sitting beside the editor.
+			() => this.done("hide"),
+			(error) => {
+				this.herdrPending = false;
+				this.showWarning(`Can't open in herdr: ${errorMessage(error)}`);
+			},
+		);
 	}
 
 	private requestDetach(): void {
@@ -551,8 +599,11 @@ export class AgentViewer implements Component {
 			if (lines.length === 0) return errorLines;
 			return [...lines, this.theme.fg("dim", "───"), ...errorLines];
 		}
-		if (lines.length === 0) return [this.theme.fg("dim", "(empty response)")];
-		return lines;
+		if (lines.length > 0) return lines;
+		const herdrPane = isRunningAgent(this.agent) ? undefined : this.agent.herdrPane;
+		return [
+			this.theme.fg("dim", herdrPane ? `runs in ${herdrPaneLabel(herdrPane)}` : "(empty response)"),
+		];
 	}
 
 	private transcriptLines(width: number): string[] {

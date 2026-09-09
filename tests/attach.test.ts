@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
 	buildAttachedAgent,
+	createHerdrDelivery,
 	handleAttachCommand,
 	matchChildSessionFiles,
 	readDispatchRecord,
@@ -13,18 +14,21 @@ import {
 	UNKNOWN_DISPATCH_BASE,
 } from "../attach.ts";
 import { conversationFingerprint, mainContextFingerprint } from "../rebase.ts";
-import { DISPATCH_PREAMBLE, persistMessages } from "../runner.ts";
+import { DISPATCH_PREAMBLE, PANE_DISPATCH_PREAMBLE, persistMessages } from "../runner.ts";
 import type {
 	AgentMessage,
 	AgentResultMessage,
 	DispatchRecordData,
 	ExtensionCommandContext,
+	HerdrDelivery,
 	Model,
 	RebaseDelivery,
 	RunningAgent,
 } from "../shared.ts";
 import { DISPATCH_ENTRY_TYPE } from "../shared.ts";
 import { UserAgentWidget } from "../widget.ts";
+import { withTemporaryAgentDir } from "./agent-dir.ts";
+import { fakeHerdr, insideFakeHerdrPane } from "./herdr-fake.ts";
 
 /** A widget under test that must never rebase. */
 const noRebase: RebaseDelivery = {
@@ -32,6 +36,12 @@ const noRebase: RebaseDelivery = {
 	deliver: () => {
 		throw new Error("Unexpected rebase delivery");
 	},
+};
+
+/** A widget under test that runs outside herdr. */
+const noHerdr: HerdrDelivery = {
+	available: () => false,
+	split: () => Promise.reject(new Error("Unexpected herdr delivery")),
 };
 
 describe("splitAtDispatchBoundary — recover a child's own conversation from its resolved context", () => {
@@ -81,6 +91,16 @@ describe("splitAtDispatchBoundary — recover a child's own conversation from it
 		] as AgentMessage[];
 
 		expect(splitAtDispatchBoundary(messages)?.task).toBe("audit the errors");
+	});
+
+	test("recognizes the pane preamble of a child born in a herdr pane", () => {
+		const boundary = splitAtDispatchBoundary([
+			...inherited,
+			{ role: "user", content: `${PANE_DISPATCH_PREAMBLE}audit the errors`, timestamp: 3 },
+		] as AgentMessage[]);
+
+		expect(boundary?.base).toEqual(inherited);
+		expect(boundary?.task).toBe("audit the errors");
 	});
 
 	test("returns undefined when no user message carries the preamble (a /fork child, or the boundary compacted away)", () => {
@@ -454,21 +474,6 @@ describe("runAttachedTurns — an attached agent binds, parks, then behaves like
 describe("handleAttachCommand — the /agent-attach command", () => {
 	type Notification = { message: string; level: string };
 
-	function withTemporaryAgentDir<T>(run: (cwd: string) => T): T {
-		const agentDirectory = mkdtempSync(join(tmpdir(), "pi-user-agents-agent-dir-"));
-		const cwd = mkdtempSync(join(tmpdir(), "pi-user-agents-project-"));
-		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-		process.env.PI_CODING_AGENT_DIR = agentDirectory;
-		try {
-			return run(cwd);
-		} finally {
-			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-			rmSync(agentDirectory, { recursive: true, force: true });
-			rmSync(cwd, { recursive: true, force: true });
-		}
-	}
-
 	function fakeContext(
 		cwd: string,
 		mainSessionManager: SessionManager,
@@ -535,7 +540,7 @@ describe("handleAttachCommand — the /agent-attach command", () => {
 		await withTemporaryAgentDir(async (cwd) => {
 			const main = SessionManager.create(cwd);
 			const runningAgents = new Set<RunningAgent>();
-			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies, noRebase);
+			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies, noRebase, noHerdr);
 			for (const args of ["", "   ", "one two"]) {
 				const { ctx, notifications } = fakeContext(cwd, main);
 				await handleAttachCommand(fakePi, runningAgents, widget, () => false, () => 1, args, ctx);
@@ -551,7 +556,7 @@ describe("handleAttachCommand — the /agent-attach command", () => {
 			const main = SessionManager.create(cwd);
 			persistedChild(cwd, main.getSessionFile());
 			const runningAgents = new Set<RunningAgent>();
-			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies, noRebase);
+			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies, noRebase, noHerdr);
 			const { ctx, notifications } = fakeContext(cwd, main);
 
 			await handleAttachCommand(fakePi, runningAgents, widget, () => false, () => 1, "ffff", ctx);
@@ -566,7 +571,7 @@ describe("handleAttachCommand — the /agent-attach command", () => {
 			const main = SessionManager.create(cwd);
 			const stranger = persistedChild(cwd, undefined);
 			const runningAgents = new Set<RunningAgent>();
-			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies, noRebase);
+			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies, noRebase, noHerdr);
 			const { ctx, notifications } = fakeContext(cwd, main);
 
 			await handleAttachCommand(
@@ -613,7 +618,7 @@ describe("handleAttachCommand — the /agent-attach command", () => {
 				finished: Promise.resolve(),
 			} satisfies RunningAgent;
 			const runningAgents = new Set<RunningAgent>([attachedAgent]);
-			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies, noRebase);
+			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies, noRebase, noHerdr);
 			const { ctx, notifications, confirmTitles } = fakeContext(cwd, main);
 
 			await handleAttachCommand(fakePi, runningAgents, widget, () => false, () => 2, "0199", ctx);
@@ -653,7 +658,7 @@ describe("handleAttachCommand — the /agent-attach command", () => {
 				finished: Promise.resolve(),
 			} satisfies RunningAgent;
 			const runningAgents = new Set<RunningAgent>([attachedAgent]);
-			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies, noRebase);
+			const widget = new UserAgentWidget(runningAgents, ...noopWidgetDependencies, noRebase, noHerdr);
 
 			const accepted = fakeContext(cwd, main, { confirmAnswers: [true] });
 			await handleAttachCommand(
@@ -850,5 +855,87 @@ describe("dispatch record — the dispatch-time facts attach cannot read from me
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("createHerdrDelivery — attach a child session to a Pi in a new herdr pane", () => {
+	const wideCaller = { paneId: "w1:p1", width: 120, height: 40 };
+
+	test("available mirrors the herdr pane environment", async () => {
+		const delivery = createHerdrDelivery(() => undefined);
+		await insideFakeHerdrPane("w1:p1", async () => expect(delivery.available()).toBe(true));
+	});
+
+	test("splits a pane for the child, then resumes its file there with the dispatch options minus model, provider, thinking, and inert options", async () => {
+		await withTemporaryAgentDir(async (cwd) => {
+			const main = SessionManager.create(cwd);
+			const child = SessionManager.create(cwd, undefined, { parentSession: main.getSessionFile() });
+			child.appendCustomEntry(DISPATCH_ENTRY_TYPE, {
+				forwardedArgs: ["--model", "opus", "--thinking", "high", "--tools", "read,grep", "--no-session"],
+				task: "audit the migration",
+				isolate: false,
+			} satisfies DispatchRecordData);
+			persistMessages(
+				child,
+				[
+					{ role: "user", content: `${DISPATCH_PREAMBLE}audit the migration`, timestamp: 1 },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "audited" }],
+						timestamp: 2,
+						stopReason: "stop",
+					},
+				] as AgentMessage[],
+				[],
+			);
+			const fake = fakeHerdr({ layout: wideCaller, paneId: "w1:p2" });
+			try {
+				const delivery = createHerdrDelivery(() => ({ cwd }) as ExtensionCommandContext);
+				const pane = await insideFakeHerdrPane("w1:p1", () =>
+					delivery.split({ sessionId: child.getSessionId() } as RunningAgent),
+				);
+
+				expect(pane.paneId).toBe("w1:p2");
+				expect(
+					fake.calls.map((call) => call.slice(0, 2)),
+					"Expected the pane split but no pi started before start()",
+				).toEqual([["pane", "layout"], ["pane", "split"]]);
+				await pane.start();
+				expect(fake.calls.at(-1), "Expected the pane's pi to resume the file with tools but not the model").toEqual([
+					"agent",
+					"start",
+					`agent-${child.getSessionId().slice(0, 13)}`,
+					"--kind",
+					"pi",
+					"--pane",
+					"w1:p2",
+					"--",
+					"--tools",
+					"read,grep",
+					"--session",
+					child.getSessionFile() as string,
+				]);
+			} finally {
+				fake.restore();
+			}
+		});
+	});
+
+	test("a child that has not answered yet has no file and cannot move", async () => {
+		await withTemporaryAgentDir(async (cwd) => {
+			const child = SessionManager.create(cwd);
+			const fake = fakeHerdr({ layout: wideCaller, paneId: "w1:p2" });
+			try {
+				const delivery = createHerdrDelivery(() => ({ cwd }) as ExtensionCommandContext);
+				await expect(
+					insideFakeHerdrPane("w1:p1", () =>
+						delivery.split({ sessionId: child.getSessionId() } as RunningAgent),
+					),
+				).rejects.toThrow("no session file yet");
+				expect(fake.calls, "Expected no pane before a file exists").toEqual([]);
+			} finally {
+				fake.restore();
+			}
+		});
 	});
 });

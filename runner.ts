@@ -1,3 +1,4 @@
+import { existsSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -16,7 +17,12 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { type AgentValueValidator, parseAgentCommand } from "./command-line.js";
+import {
+	type AgentValueValidator,
+	forwardedArgsForPane,
+	parseAgentCommand,
+} from "./command-line.js";
+import { herdrAgentName, insideHerdr, openPiInHerdrPane } from "./herdr.js";
 import { conversationFingerprint, mainContextFingerprint } from "./rebase.js";
 import type {
 	AgentCommandName,
@@ -39,6 +45,7 @@ import {
 	errorMessage,
 	formatModel,
 	formatModelLabel,
+	herdrPaneLabel,
 	logSteering,
 	REBASED_ENTRY_TYPE,
 } from "./shared.js";
@@ -91,20 +98,18 @@ async function startUserAgent(
 	ctx: ExtensionCommandContext,
 ): Promise<void> {
 	const parsed = parseAgentCommand(args, command);
+	if (parsed.herdr && !insideHerdr())
+		throw new Error(`/${command} -h needs Pi to run inside a herdr pane`);
 	const parsedForwardedArgs = parseForwardedArgs(parsed.forwardedArgs);
-	const services = await createChildServices(
-		ctx,
-		buildChildResourceLoaderOptions(parsedForwardedArgs, ctx.cwd),
-	);
-	const forwarded = resolveForwardedOptions(parsedForwardedArgs, services.modelRuntime);
+	const modelRuntime = parentModelRuntime(ctx);
+	const forwarded = resolveForwardedOptions(parsedForwardedArgs, modelRuntime);
 	const selectedModel = forwarded.model ?? ctx.model;
 	if (!selectedModel) throw new Error("No current model is selected; pass -m MODELNAME");
-	const model =
-		services.modelRuntime.getModel(selectedModel.provider, selectedModel.id) ?? selectedModel;
+	const model = modelRuntime.getModel(selectedModel.provider, selectedModel.id) ?? selectedModel;
 	const thinkingLevel = forwarded.thinkingLevel ?? pi.getThinkingLevel();
 	const inheritedMessages = parsed.isolate ? [] : buildInheritedMessages(ctx);
 	// A real session file from birth: the child outlives the widget row and stays resumable.
-	const childSessionManager = SessionManager.create(services.cwd, undefined, {
+	const childSessionManager = SessionManager.create(ctx.cwd, undefined, {
 		parentSession: ctx.sessionManager.getSessionFile(),
 	});
 	// The dispatch record: /agent-attach restores tool and resource options from it later.
@@ -123,11 +128,32 @@ async function startUserAgent(
 		conversationFingerprint(inheritedMessages),
 	);
 
-	runningAgents.add(runningAgent);
-	logSteering(runningAgent.id, "agent-created", { command, taskLength: parsed.task.length });
 	if (ctx.hasUI) {
 		widget.setUI(ctx.ui);
 		for (const warning of parsed.warnings) ctx.ui.notify(warning, "warning");
+	}
+	if (parsed.herdr) {
+		await dispatchToHerdrPane(
+			ctx,
+			widget,
+			childSessionManager,
+			inheritedMessages,
+			model,
+			thinkingLevel,
+			parsed,
+			runningAgent,
+		);
+		return;
+	}
+
+	// The pane's Pi loads its own resources; only a background child needs them here.
+	const services = await createChildServices(
+		ctx,
+		buildChildResourceLoaderOptions(parsedForwardedArgs, ctx.cwd),
+	);
+	runningAgents.add(runningAgent);
+	logSteering(runningAgent.id, "agent-created", { command, taskLength: parsed.task.length });
+	if (ctx.hasUI) {
 		ctx.ui.notify(formatStartNotification(runningAgent), "info");
 		widget.ensureTimer();
 		widget.update();
@@ -151,6 +177,64 @@ async function startUserAgent(
 		runningAgents.delete(runningAgent);
 		widget.update();
 	});
+}
+
+/**
+ * An agent born in a herdr pane: the child file is flushed here, then the pane's Pi resumes it
+ * with the dispatch options as CLI flags and takes the preambled task as its first prompt.
+ * Nothing runs in this process, so the widget row is a pointer at the pane from birth.
+ */
+async function dispatchToHerdrPane(
+	ctx: ExtensionCommandContext,
+	widget: UserAgentWidget,
+	childSessionManager: SessionManager,
+	inheritedMessages: AgentMessage[],
+	model: Model,
+	thinkingLevel: ThinkingLevel,
+	parsed: ParsedAgentCommand,
+	runningAgent: RunningAgent,
+): Promise<void> {
+	persistMessages(childSessionManager, inheritedMessages, []);
+	// Pi resumes a session with the model of whichever comes last on the path, a model_change entry
+	// or an assistant message, and writes model_change itself only on its empty-session path. Record
+	// both after the snapshot, or a later /agent-attach or /resume takes main's last answer's model.
+	childSessionManager.appendModelChange(model.provider, model.id);
+	childSessionManager.appendThinkingLevelChange(thinkingLevel);
+	const sessionFile = flushSessionFile(childSessionManager);
+	// Explicit on the CLI too: an isolated child's file has no messages, and pi then takes the
+	// flags over the file.
+	const paneId = await openPiInHerdrPane(ctx.cwd, herdrAgentName(runningAgent.sessionId), [
+		...forwardedArgsForPane(parsed.forwardedArgs),
+		"--provider",
+		model.provider,
+		"--model",
+		model.id,
+		"--thinking",
+		thinkingLevel,
+		"--session",
+		sessionFile,
+		PANE_DISPATCH_PREAMBLE + parsed.task,
+	]);
+	logSteering(runningAgent.id, "agent-dispatched-to-herdr", { paneId });
+	if (!ctx.hasUI) return;
+	widget.addHerdrDispatch(runningAgent, paneId);
+	ctx.ui.notify(`Started /${runningAgent.command} in ${herdrPaneLabel(paneId)}`, "info");
+}
+
+/**
+ * Make sure a child session file is on disk. Pi defers the file until the first assistant
+ * message, so a child whose inherited context has none is still in memory only, while a Pi in
+ * another pane can only resume a file that exists.
+ */
+export function flushSessionFile(sessionManager: SessionManager): string {
+	const sessionFile = sessionManager.getSessionFile();
+	if (!sessionFile) throw new Error("The child session has no file path");
+	if (existsSync(sessionFile)) return sessionFile;
+	const lines = [sessionManager.getHeader(), ...sessionManager.getEntries()].map(
+		(entry) => `${JSON.stringify(entry)}\n`,
+	);
+	writeFileSync(sessionFile, lines.join(""), { flag: "wx" });
+	return sessionFile;
 }
 
 function createRunningAgent(
@@ -296,11 +380,17 @@ export function createChildServices(
 		cwd: ctx.cwd,
 		agentDir,
 		settingsManager,
-		// The extension facade wraps the parent's runtime as a plain property; sharing it keeps
-		// extension-registered providers (their process-global dedup guard) available to the child.
-		modelRuntime: (ctx.modelRegistry as unknown as { runtime: ModelRuntime }).runtime,
+		modelRuntime: parentModelRuntime(ctx),
 		resourceLoaderOptions,
 	});
+}
+
+/**
+ * The parent's ModelRuntime: the extension facade wraps it as a plain property. Sharing it keeps
+ * extension-registered providers (their process-global dedup guard) available to the child.
+ */
+function parentModelRuntime(ctx: ExtensionCommandContext): ModelRuntime {
+	return (ctx.modelRegistry as unknown as { runtime: ModelRuntime }).runtime;
 }
 
 /** Parse forwarded pi CLI tokens once before model and session resolution. */
@@ -516,9 +606,13 @@ export function reportAgentFailure(
 		runningAgent.status = "posted";
 }
 
-/** Every dispatch prefixes its task with this; attach recognizes it as the child's dispatch boundary. */
+/** Every background dispatch prefixes its task with this; attach recognizes it as the child's dispatch boundary. */
 export const DISPATCH_PREAMBLE =
 	"You are running in an ephemeral, forked background process now, concurrently with the main session. ";
+/** The -h dispatch's preamble: that child is interactive, and the user may talk to it in its pane. */
+export const PANE_DISPATCH_PREAMBLE =
+	"You are running in a forked session now, in a herdr pane beside the main session. The user may talk to you here. ";
+export const DISPATCH_PREAMBLES = [DISPATCH_PREAMBLE, PANE_DISPATCH_PREAMBLE] as const;
 
 /** Run turns on an initialized child session until it posts, retires, or shuts down. The initial instruction is sent verbatim. */
 export async function runChildTurns(

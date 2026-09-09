@@ -5,6 +5,7 @@ import { contextMeterColor, renderContextMeter } from "../context-meter.ts";
 import type {
 	AgentMessage,
 	AgentResultMessage,
+	HerdrDelivery,
 	RebaseDelivery,
 	RunningAgent,
 	Theme,
@@ -19,6 +20,12 @@ const noRebase: RebaseDelivery = {
 	deliver: () => {
 		throw new Error("Unexpected rebase delivery");
 	},
+};
+
+/** A widget under test that runs outside herdr. */
+const noHerdr: HerdrDelivery = {
+	available: () => false,
+	split: () => Promise.reject(new Error("Unexpected herdr delivery")),
 };
 
 const meterTheme = {
@@ -88,7 +95,7 @@ function renderRunningHeader(
 					>),
 		finished: Promise.resolve(),
 	} satisfies RunningAgent;
-	const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, () => undefined, noRebase);
+	const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, () => undefined, noRebase, noHerdr);
 	const theme = {
 		fg: (_color: string, text: string) => text,
 		bold: (text: string) => text,
@@ -185,6 +192,7 @@ describe("UserAgentWidget steering", () => {
 			() => undefined,
 			(sessionId) => detachedSessionIds.push(sessionId),
 			noRebase,
+			noHerdr,
 		);
 		let terminalInput = (_data: string): unknown => undefined;
 		const ui = {
@@ -248,7 +256,7 @@ describe("UserAgentWidget steering", () => {
 			session,
 			finished: Promise.resolve(),
 		} satisfies RunningAgent;
-		const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, () => undefined, noRebase);
+		const widget = new UserAgentWidget(new Set([runningAgent]), () => undefined, () => undefined, noRebase, noHerdr);
 		const theme = {
 			fg: (_color: string, text: string) => text,
 			bold: (text: string) => text,
@@ -347,6 +355,7 @@ describe("UserAgentWidget steering", () => {
 			(message) => squashedResults.push(message),
 			() => undefined,
 			noRebase,
+			noHerdr,
 		);
 		const theme = {
 			fg: (_color: string, text: string) => text,
@@ -451,6 +460,7 @@ describe("UserAgentWidget completed overlay", () => {
 			(message) => squashedResults.push(message),
 			(sessionId) => detachedSessionIds.push(sessionId),
 			noRebase,
+			noHerdr,
 		);
 		widget.addCompleted(completedAgent, resultMessage, { squashable: true });
 		const theme = {
@@ -542,6 +552,7 @@ function buildIdleHarness(
 	contextUsage: ContextUsage = undefined,
 	rebaseDelivery: RebaseDelivery = noRebase,
 	extraAgents: RunningAgent[] = [],
+	herdrDelivery: HerdrDelivery = noHerdr,
 ): IdleHarness {
 	const messages = [
 		{ role: "user", content: [{ type: "text", text: "hello how are you?" }], timestamp: 1 },
@@ -615,6 +626,7 @@ function buildIdleHarness(
 		(message) => squashedResults.push(message),
 		(sessionId) => detachedSessionIds.push(sessionId),
 		rebaseDelivery,
+		herdrDelivery,
 	);
 	const foregroundCalls: Array<{ color: string; text: string }> = [];
 	let renderRequests = 0;
@@ -1295,6 +1307,164 @@ describe("UserAgentWidget selected-row action parity", () => {
 	});
 });
 
+describe("UserAgentWidget herdr", () => {
+	function herdrDelivery(paneId: string): { delivery: HerdrDelivery; opened: string[] } {
+		const opened: string[] = [];
+		return {
+			opened,
+			delivery: {
+				available: () => true,
+				split: async (agent) => ({
+					paneId,
+					start: async () => {
+						opened.push(agent.sessionId);
+					},
+				}),
+			},
+		};
+	}
+	const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+	test("h moves the selected idle agent to a herdr pane: the session ends here, the row stays labeled with the pane, and focus returns to the editor", async () => {
+		const { delivery, opened } = herdrDelivery("w1:p3");
+		const harness = buildIdleHarness(undefined, noRebase, [], delivery);
+		harness.sendWidgetKey("\x1b[B");
+		expect(harness.widgetComponent().render(140).join("\n")).toContain("h herdr");
+
+		harness.sendWidgetKey("h");
+		expect(harness.widgetComponent().render(140).join("\n")).toContain("Opening a herdr pane");
+		await settle();
+
+		expect(opened).toEqual(["session-1"]);
+		expect(harness.agent.aborted).toBe(true);
+		expect(harness.retireCalls(), "Expected the live session to end here first").toBe(1);
+		expect(
+			harness.detachedSessionIds,
+			"Expected no detach breadcrumb: the session moved, it was not detached",
+		).toEqual([]);
+		const rendered = harness.widgetComponent().render(140).join("\n");
+		expect(rendered).toContain("herdr pane w1:p3");
+		expect(rendered, "Expected the snapshot to keep the last response").toContain("fine how are you?");
+		expect(rendered, "Expected the widget to hand focus back to the editor").toContain(
+			"←/↓ select agent",
+		);
+		expect(rendered).not.toContain("h herdr");
+	});
+
+	test("h in the overlay moves the agent, closes the overlay, and returns focus to the editor", async () => {
+		const { delivery, opened } = herdrDelivery("w2:p1");
+		const harness = buildIdleHarness(undefined, noRebase, [], delivery);
+		harness.openViewer();
+		const viewer = harness.viewer();
+		expect(viewer.render(100).join("\n")).toContain("h herdr");
+
+		viewer.handleInput?.("h");
+		expect(viewer.render(100).join("\n")).toContain("Opening a herdr pane");
+		await harness.settleViewer();
+
+		expect(opened).toEqual(["session-1"]);
+		expect(harness.agent.status).toBe("posted");
+		const rendered = harness.widgetComponent().render(140).join("\n");
+		expect(rendered).toContain("herdr pane w2:p1");
+		expect(rendered).toContain("←/↓ select agent");
+	});
+
+	test("outside herdr, h is not offered and explains why on press", async () => {
+		const harness = buildIdleHarness();
+		harness.sendWidgetKey("\x1b[B");
+		expect(harness.widgetComponent().render(140).join("\n")).not.toContain("h herdr");
+
+		harness.sendWidgetKey("h");
+		await settle();
+
+		expect(harness.widgetComponent().render(140).join("\n")).toContain(
+			"Can't open in herdr: Pi is not running inside a herdr pane",
+		);
+		expect(harness.agent.status).toBe("idle");
+	});
+
+	test("h is withheld for a mid-turn agent and for a row already in a herdr pane", async () => {
+		const { delivery } = herdrDelivery("w1:p3");
+		const harness = buildIdleHarness(undefined, noRebase, [], delivery);
+		harness.agent.status = "running";
+		harness.sendWidgetKey("\x1b[B");
+		expect(harness.widgetComponent().render(140).join("\n")).not.toContain("h herdr");
+		harness.sendWidgetKey("h");
+		await settle();
+		expect(harness.widgetComponent().render(140).join("\n")).toContain(
+			"Can't open in herdr: the agent is mid-turn",
+		);
+
+		harness.agent.status = "idle";
+		harness.sendWidgetKey("h");
+		await settle();
+		harness.sendWidgetKey("\x1b[B");
+		expect(harness.widgetComponent().render(140).join("\n")).not.toContain("h herdr");
+		harness.sendWidgetKey("h");
+		await settle();
+		expect(harness.widgetComponent().render(140).join("\n")).toContain(
+			"Can't open in herdr: already in herdr pane w1:p3",
+		);
+	});
+
+	test("a herdr failure before the pane exists leaves the agent untouched here", async () => {
+		const failing: HerdrDelivery = {
+			available: () => true,
+			split: () => Promise.reject(new Error("herdr server is not running")),
+		};
+		const harness = buildIdleHarness(undefined, noRebase, [], failing);
+		harness.sendWidgetKey("\x1b[B");
+
+		harness.sendWidgetKey("h");
+		await settle();
+
+		const rendered = harness.widgetComponent().render(140).join("\n");
+		expect(rendered).toContain("Can't open in herdr: herdr server is not running");
+		expect(harness.agent.status, "Expected the agent to stay idle and steerable").toBe("idle");
+		expect(harness.retireCalls()).toBe(0);
+		expect(harness.agent.aborted).toBeUndefined();
+	});
+
+	test("a failed pi start keeps the agent here as a squashable row and shows herdr's reason", async () => {
+		const failing: HerdrDelivery = {
+			available: () => true,
+			split: async () => ({
+				paneId: "w1:p9",
+				start: () => Promise.reject(new Error("agent name agent-0199 is already used")),
+			}),
+		};
+		const harness = buildIdleHarness(undefined, noRebase, [], failing);
+		harness.sendWidgetKey("\x1b[B");
+
+		harness.sendWidgetKey("h");
+		await settle();
+
+		const rendered = harness.widgetComponent().render(140).join("\n");
+		expect(rendered).toContain("Can't open in herdr: agent name agent-0199 is already used");
+		expect(rendered).not.toContain("herdr pane");
+		expect(harness.retireCalls(), "Expected the session to have ended here before the pane opened").toBe(1);
+		harness.sendWidgetKey("s");
+		expect(
+			harness.squashedResults.map((message) => message.content),
+			"Expected the surviving row to still squash its last result",
+		).toEqual(["<user_agent>fine how are you?</user_agent>"]);
+	});
+
+	test("an agent dispatched straight into a herdr pane renders as a row that points at the pane", () => {
+		const harness = buildIdleHarness();
+		harness.agent.responseText = "";
+		harness.agent.turnCount = 0;
+		harness.widget.addHerdrDispatch(harness.agent, "w1:p4");
+
+		const lines = harness.widgetComponent().render(140);
+		const header = lines.find((line) => line.includes("/agent") && line.includes("w1:p4")) ?? "";
+		expect(header).toContain("⧉");
+		expect(header).toContain("herdr pane w1:p4");
+		expect(header, "Expected no duration for an agent that never ran here").not.toContain("0.0s");
+		expect(lines.join("\n")).toContain("runs in herdr pane w1:p4");
+	});
+});
+
 describe("TimedConfirmation", () => {
 	test("arms on first press, confirms on repeat, re-arms on a new target, cancels, expires", async () => {
 		let expirations = 0;
@@ -1358,6 +1528,7 @@ describe("UserAgentWidget attach queries", () => {
 			() => undefined,
 			() => undefined,
 			noRebase,
+			noHerdr,
 		);
 		widget.addCompleted(
 			completedSeed,

@@ -11,6 +11,7 @@ from the declaration in `command-line.ts`.
 type ParsedAgentCommand = {
   isolate: boolean;          // -i / --isolate
   squash: boolean;           // -s / --squash
+  herdr: boolean;            // -h / --herdr
   forwardedArgs: string[];   // recognized pi option tokens (+values) in input order, e.g. ["--thinking","high"]
   task: string;              // the prose prompt (backslash escapes applied, quotes kept). Never empty.
   warnings: string[];        // advisory messages (see §5). May be empty.
@@ -44,10 +45,12 @@ leading whitespace (unchanged from today).
 | `-m`, `--model` | value | Added to `forwardedArgs` as canonical `--model <value>` |
 | `-i`, `--isolate` | boolean | Consumed here; `isolate = true` |
 | `-s`, `--squash` | boolean | Consumed here; `squash = true` |
+| `-h`, `--herdr` | boolean | Consumed here; `herdr = true` |
 
 `-m` and `--model` are one semantic option. Both require an exact live model ID, canonical
 `provider/id` reference, or user-defined alias before resolving through Pi's `resolveCliModel()`
-path. A preceding `--provider` scopes either spelling. `-s` is the extension's squash option.
+path. A preceding `--provider` scopes either spelling. `-s` is the extension's squash option and
+`-h` its herdr option; the two conflict, and a submission carrying both is a hard **error**.
 A model option with no value and no remaining task ends in the normal
 **usage error**.
 
@@ -65,6 +68,10 @@ A model option with no value and no remaining task ends in the normal
 Notes:
 - The shared declaration is a snapshot of `pi --help`; it is maintained by hand. There is no
   runtime dependency on pi's parser for recognition or arity.
+- The session, approval, offline, and API-key families are declared `inert`: they are forwarded
+  to a background run, where they have no effect, and `forwardedArgsForPane` drops them (with
+  `--model`, `--provider`, and `--thinking`) from the command line of a Pi started in a herdr pane,
+  where a real `pi` process would obey them.
 - **Reading a value** (applies to every value-taking option, including both model spellings):
   the value is the token immediately after the option. If that token **begins with a quote char**
   (§6a) and a matching close quote appears later, the value is the text between the quotes —
@@ -86,7 +93,7 @@ Value examples:
 
 ### 3c. Blocked pi options — rejected
 `-c`/`--continue`, `-p`/`--print`, `--theme <path>`, `--models`, `--export`, `--list-models`,
-`-h`/`--help`, `-v`/`--version`.
+`--help`, `-v`/`--version`. (`-h` is the extension's herdr option, §3a.)
 Appearing in **args mode** (leading) → hard **error**:
 `"/agent does not support <opt>; it would disrupt the background agent run."`
 
@@ -171,6 +178,7 @@ recognition and arity come from the shared declaration.
 - Bare `-m` (no value) → usage error.
 - Empty task after consuming options → usage error.
 - Blocked option leading → hard error; in prose → warning.
+- `-h` together with `-s` → hard error.
 - No `--` options terminator (backslash/quotes handle "task starts with a dash").
 - Value-taking option with no following token → the option is still recorded (no value); no crash.
 - Multiple known options in prose → one warning per occurrence, in order.

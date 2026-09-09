@@ -2,7 +2,7 @@ import type {
 	MessageEndEvent,
 	MessageEndEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { handleAttachCommand } from "./attach.js";
+import { createHerdrDelivery, handleAttachCommand } from "./attach.js";
 import { registerAgentAutocomplete } from "./autocomplete.js";
 import { createRebaseDelivery, handleAgentCommand } from "./runner.js";
 import type {
@@ -25,6 +25,7 @@ export default function userAgent(pi: ExtensionAPI): void {
 		(message) => pi.sendMessage(message, { triggerTurn: true }),
 		(sessionId) => pi.appendEntry<DetachedEntryData>(DETACHED_ENTRY_TYPE, { sessionId }),
 		createRebaseDelivery(pi, () => mainSessionContext),
+		createHerdrDelivery(() => mainSessionContext),
 	);
 	let shuttingDown = false;
 	let nextAgentNumber = 0;
