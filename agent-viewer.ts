@@ -151,13 +151,17 @@ function truncateMiddle(
 const VIEWER_CHROME_LINES = 6;
 const VIEWER_MIN_VIEWPORT = 3;
 const VIEWER_HEIGHT_PCT = 85;
+const COPY_FEEDBACK_MS = 1500;
+
+type CopyTarget = "response" | "session-id";
 
 /** Focus-capturing overlay that shows an agent's live or finished response. */
 export class AgentViewer implements Component {
 	private scrollOffset = 0;
 	private autoScroll = true;
 	private lastWidth = 0;
-	private justCopied = false;
+	private copied: CopyTarget | undefined;
+	private copiedTimer: ReturnType<typeof setTimeout> | undefined;
 	private rebaseWarning: string | undefined;
 	private rebaseWarningTimer: ReturnType<typeof setTimeout> | undefined;
 	/** One confirmation slot for both destructive overlay actions. */
@@ -210,6 +214,10 @@ export class AgentViewer implements Component {
 		}
 		if (matchesKey(data, "c")) {
 			this.copyResponse();
+			return;
+		}
+		if (matchesKey(data, "i")) {
+			this.copyToClipboard(this.agent.sessionId, "session-id");
 			return;
 		}
 		if (matchesKey(data, "s") && this.canSquashMainContext()) {
@@ -351,7 +359,11 @@ export class AgentViewer implements Component {
 					th.fg("dim", `${content.length} lines`),
 					th.fg("dim", scrollPct),
 					this.canSteer() ? th.fg("dim", "Enter steer") : "",
-					this.justCopied ? th.fg("success", "✓ copied") : th.fg("dim", "c copy"),
+					this.copied === "response"
+						? th.fg("success", "✓ copied")
+						: this.copied === "session-id"
+							? th.fg("success", "✓ copied ID")
+							: th.fg("dim", "c copy · i ID"),
 					th.fg("dim", "↑↓ scroll"),
 					th.fg("dim", "PgUp/PgDn"),
 					this.canSquashMainContext() ? th.fg("dim", "s squash") : "",
@@ -401,14 +413,20 @@ export class AgentViewer implements Component {
 			isRunningAgent(this.agent) || this.agent.ok
 				? this.agent.responseText
 				: (this.agent.error ?? "");
+		this.copyToClipboard(text, "response");
+	}
+
+	private copyToClipboard(text: string, target: CopyTarget): void {
 		const child = childProcess.execFile("pbcopy", (error) => {
 			if (error) return;
-			this.justCopied = true;
+			this.copied = target;
+			if (this.copiedTimer) clearTimeout(this.copiedTimer);
 			this.tui.requestRender();
-			setTimeout(() => {
-				this.justCopied = false;
+			this.copiedTimer = setTimeout(() => {
+				this.copied = undefined;
+				this.copiedTimer = undefined;
 				this.tui.requestRender();
-			}, 1500);
+			}, COPY_FEEDBACK_MS);
 		});
 		child.stdin?.end(text);
 	}

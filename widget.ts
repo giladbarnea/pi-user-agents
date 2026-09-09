@@ -1,3 +1,4 @@
+import * as childProcess from "node:child_process";
 import {
 	isKeyRelease,
 	matchesKey,
@@ -26,6 +27,7 @@ import type {
 	UIContext,
 } from "./shared.js";
 import {
+	CONFIRMATION_WINDOW_MS,
 	contextLabel,
 	formatMs,
 	TimedConfirmation,
@@ -52,6 +54,10 @@ type CachedActivityPreview = {
 	text: string;
 };
 
+type CopyTarget = "response" | "session-id";
+
+const COPY_FEEDBACK_MS = 1500;
+
 export class UserAgentWidget {
 	private ui: UIContext | undefined;
 	private frame = 0;
@@ -62,9 +68,13 @@ export class UserAgentWidget {
 	private active = false;
 	private selectedIndex = 0;
 	private viewerOpen = false;
+	private copied: { agentId: string; target: CopyTarget } | undefined;
+	private copiedTimer: ReturnType<typeof setTimeout> | undefined;
+	private rebaseWarning: { agentId: string; text: string } | undefined;
+	private rebaseWarningTimer: ReturnType<typeof setTimeout> | undefined;
 	private activityPreviews = new WeakMap<ViewableAgent, CachedActivityPreview>();
-	/** One confirmation slot for detaching the selected agent. */
-	private readonly detachConfirmation = new TimedConfirmation<ViewableAgent>(() => this.update());
+	/** One confirmation slot for both destructive selected-row actions. */
+	private readonly confirmation = new TimedConfirmation<string>(() => this.update());
 	private readonly completedAgents: CompletedAgent[] = [];
 
 	constructor(
@@ -81,7 +91,7 @@ export class UserAgentWidget {
 		this.activityPreviews = new WeakMap();
 		this.widgetRegistered = false;
 		this.tui = undefined;
-		this.detachConfirmation.cancel();
+		this.confirmation.cancel();
 		this.inputUnsub = ui.onTerminalInput((data) => this.handleKey(data));
 	}
 
@@ -166,7 +176,7 @@ export class UserAgentWidget {
 		this.tui = undefined;
 		this.active = false;
 		this.activityPreviews = new WeakMap();
-		this.detachConfirmation.cancel();
+		this.confirmation.cancel();
 	}
 
 	private clear(): void {
@@ -181,7 +191,7 @@ export class UserAgentWidget {
 		}
 		this.active = false;
 		this.selectedIndex = 0;
-		this.detachConfirmation.cancel();
+		this.confirmation.cancel();
 	}
 
 	private runningAgentsForWidget(): RunningAgent[] {
@@ -225,13 +235,13 @@ export class UserAgentWidget {
 		}
 
 		if (matchesKey(data, "down")) {
-			this.detachConfirmation.cancel();
+			this.confirmation.cancel();
 			this.selectedIndex = Math.min(entries.length - 1, this.selectedIndex + 1);
 			this.update();
 			return { consume: true };
 		}
 		if (matchesKey(data, "up")) {
-			this.detachConfirmation.cancel();
+			this.confirmation.cancel();
 			if (this.selectedIndex === 0) {
 				this.deactivate();
 				return { consume: true };
@@ -246,18 +256,38 @@ export class UserAgentWidget {
 		}
 
 		const selected = entries[this.selectedIndex];
+		if (!matchesKey(data, "d") && !matchesKey(data, "r")) this.confirmation.cancel();
 		if (
 			matchesKey(data, "ctrl+x") &&
 			selected?.kind === "running" &&
 			isLiveAgent(selected.agent)
 		) {
-			this.detachConfirmation.cancel();
 			this.interruptRunning(selected.agent);
 			return { consume: true };
 		}
 		if (matchesKey(data, "enter")) {
-			this.detachConfirmation.cancel();
 			if (selected) this.openSelected(selected.agent);
+			return { consume: true };
+		}
+		if (matchesKey(data, "c") && selected) {
+			const text =
+				isRunningAgent(selected.agent) || selected.agent.ok
+					? selected.agent.responseText
+					: (selected.agent.error ?? "");
+			this.copyToClipboard(selected.agent.id, text, "response");
+			return { consume: true };
+		}
+		if (matchesKey(data, "i") && selected) {
+			this.copyToClipboard(selected.agent.id, selected.agent.sessionId, "session-id");
+			return { consume: true };
+		}
+		if (matchesKey(data, "s")) {
+			if (selected && this.canSquashMainContext(selected.agent.id))
+				this.squashMainContext(selected.agent.id);
+			return { consume: true };
+		}
+		if (matchesKey(data, "r")) {
+			this.requestRebase(selected);
 			return { consume: true };
 		}
 		if (matchesKey(data, "d") && selected) {
@@ -272,15 +302,64 @@ export class UserAgentWidget {
 	}
 
 	private confirmDetach(target: ViewableAgent): boolean {
-		const confirmed = this.detachConfirmation.press(target);
+		const confirmed = this.confirmation.press(`detach:${target.id}`);
 		if (!confirmed) this.update();
 		return confirmed;
+	}
+
+	private requestRebase(selected: UserAgentWidgetEntry | undefined): void {
+		if (!selected) return;
+		const agentId = selected.agent.id;
+		const reason = this.rebaseBlockReason(agentId);
+		if (reason) {
+			this.confirmation.cancel();
+			this.showRebaseWarning(agentId, `Can't rebase: ${reason}`);
+			return;
+		}
+		if (!this.deliverableAgent(agentId)) {
+			this.confirmation.cancel();
+			return;
+		}
+		if (
+			this.rebaseDetachCount(agentId) > 0 &&
+			!this.confirmation.press(`rebase:${agentId}`)
+		) {
+			this.update();
+			return;
+		}
+		this.rebaseMainContext(agentId);
+	}
+
+	private copyToClipboard(agentId: string, text: string, target: CopyTarget): void {
+		const child = childProcess.execFile("pbcopy", (error) => {
+			if (error) return;
+			this.copied = { agentId, target };
+			if (this.copiedTimer) clearTimeout(this.copiedTimer);
+			this.update();
+			this.copiedTimer = setTimeout(() => {
+				this.copied = undefined;
+				this.copiedTimer = undefined;
+				this.update();
+			}, COPY_FEEDBACK_MS);
+		});
+		child.stdin?.end(text);
+	}
+
+	private showRebaseWarning(agentId: string, text: string): void {
+		this.rebaseWarning = { agentId, text };
+		if (this.rebaseWarningTimer) clearTimeout(this.rebaseWarningTimer);
+		this.rebaseWarningTimer = setTimeout(() => {
+			this.rebaseWarning = undefined;
+			this.rebaseWarningTimer = undefined;
+			this.update();
+		}, CONFIRMATION_WINDOW_MS);
+		this.update();
 	}
 
 	private deactivate(): void {
 		this.active = false;
 		this.selectedIndex = 0;
-		this.detachConfirmation.cancel();
+		this.confirmation.cancel();
 		this.update();
 	}
 
@@ -511,24 +590,60 @@ export class UserAgentWidget {
 		} else {
 			const selected = entries[this.selectedIndex];
 			const confirmingDetach =
-				selected !== undefined && this.detachConfirmation.isArmedOn(selected.agent);
-			const segments = [theme.fg("accent", "↑↓ select"), theme.fg("accent", "Enter view")];
-			if (
-				!confirmingDetach &&
-				selected?.kind === "running" &&
-				isLiveAgent(selected.agent)
-			)
-				segments.push(theme.fg("accent", "Ctrl+x interrupt"));
-			segments.push(
-				theme.fg(
-					confirmingDetach ? "error" : "accent",
-					confirmingDetach ? "d again to confirm" : "d detach",
-				),
-				theme.fg("accent", "Esc back"),
-			);
-			lines.push(
-				truncateToWidth(`  ${segments.join(theme.fg("accent", " · "))}`, width),
-			);
+				selected !== undefined &&
+				this.confirmation.isArmedOn(`detach:${selected.agent.id}`);
+			const confirmingRebase =
+				selected !== undefined &&
+				this.confirmation.isArmedOn(`rebase:${selected.agent.id}`);
+			if (confirmingRebase && selected) {
+				const detachCount = this.rebaseDetachCount(selected.agent.id);
+				lines.push(
+					truncateToWidth(
+						`  ${theme.fg(
+							"warning",
+							`⚠ Rebase will detach ${detachCount} other agent session${detachCount === 1 ? "" : "s"}. r again to confirm`,
+						)}`,
+						width,
+					),
+				);
+			} else if (selected && this.rebaseWarning?.agentId === selected.agent.id) {
+				lines.push(
+					truncateToWidth(`  ${theme.fg("warning", `⚠ ${this.rebaseWarning.text}`)}`, width),
+				);
+			} else {
+				const segments = [theme.fg("accent", "↑↓ select"), theme.fg("accent", "Enter view")];
+				if (!confirmingDetach)
+					segments.push(
+						this.copied?.agentId === selected?.agent.id &&
+							this.copied.target === "response"
+							? theme.fg("success", "✓ copied")
+							: theme.fg("accent", "c copy"),
+						this.copied?.agentId === selected?.agent.id &&
+							this.copied.target === "session-id"
+							? theme.fg("success", "✓ copied ID")
+							: theme.fg("accent", "i ID"),
+					);
+				if (!confirmingDetach && selected && this.canSquashMainContext(selected.agent.id))
+					segments.push(theme.fg("accent", "s squash"));
+				if (!confirmingDetach && selected && this.canRebaseMainContext(selected.agent.id))
+					segments.push(theme.fg("accent", "r rebase"));
+				if (
+					!confirmingDetach &&
+					selected?.kind === "running" &&
+					isLiveAgent(selected.agent)
+				)
+					segments.push(theme.fg("accent", "Ctrl+x interrupt"));
+				segments.push(
+					theme.fg(
+						confirmingDetach ? "error" : "accent",
+						confirmingDetach ? "d again to confirm" : "d detach",
+					),
+					theme.fg("accent", "Esc back"),
+				);
+				lines.push(
+					truncateToWidth(`  ${segments.join(theme.fg("accent", " · "))}`, width),
+				);
+			}
 		}
 
 		const maxEntries = Math.max(1, Math.floor((MAX_WIDGET_LINES - lines.length) / 2));
@@ -568,15 +683,17 @@ export class UserAgentWidget {
 		const running = isRunningAgent(agent);
 		const inFlight = isLiveAgent(agent);
 		const ok = running ? agent.error === undefined : agent.ok;
+		const status = inFlight ? "running" : running ? "idle" : ok ? "completed" : "failed";
 		const marker = selected ? theme.fg("accent", "⏺") : theme.fg("dim", "◯");
 		const icon = inFlight
 			? theme.fg("accent", SPINNER[this.frame % SPINNER.length])
-			: ok
-				? theme.fg("success", "✓")
-				: theme.fg("error", "✗");
-		const parts = inFlight
-			? [agent.modelLabel, contextLabel(agent.inheritedContext)]
-			: [agent.modelLabel];
+			: running
+				? theme.fg("muted", "◉")
+				: ok
+					? theme.fg("success", "✓")
+					: theme.fg("error", "✗");
+		const parts = [agent.modelLabel, status];
+		if (inFlight) parts.push(contextLabel(agent.inheritedContext));
 		const mainContext = mainContextLabel(agent.mainContextState);
 		if (mainContext) parts.push(mainContext);
 		if (agent.turnCount > 0) parts.push(formatTurns(agent.turnCount));
@@ -592,6 +709,7 @@ export class UserAgentWidget {
 			marker,
 			icon,
 			theme.bold(`/${agent.command}`),
+			selected ? theme.fg("dim", `ID ${agent.sessionId.slice(0, 8)}`) : "",
 			renderAgentContextMeter(agent, theme),
 			theme.fg("muted", truncatePlain(agent.task, 52)),
 			theme.fg("dim", "·"),

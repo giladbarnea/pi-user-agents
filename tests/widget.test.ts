@@ -1,3 +1,4 @@
+import * as childProcess from "node:child_process";
 import { describe, expect, spyOn, test } from "bun:test";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { contextMeterColor, renderContextMeter } from "../context-meter.ts";
@@ -762,13 +763,48 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		}
 	});
 
-	test("renders an idle agent as a green-checked turn-complete entry with its response preview", () => {
+	test("renders running, idle, completed, and failed as explicit distinct row states", () => {
+		const runningHarness = buildIdleHarness();
+		runningHarness.agent.status = "running";
+		const idleHarness = buildIdleHarness();
+		const completedHarness = buildIdleHarness();
+		const completedMessage = completedHarness.agent.pendingSquashMessage;
+		if (!completedMessage) throw new Error("Idle harness did not provide a completed result");
+		completedHarness.agent.status = "posted";
+		completedHarness.widget.addCompleted(completedHarness.agent, completedMessage, {
+			squashable: false,
+		});
+		const failedHarness = buildIdleHarness();
+		const failedMessage = failedHarness.agent.pendingSquashMessage;
+		if (!failedMessage) throw new Error("Idle harness did not provide a failed result");
+		failedHarness.agent.status = "posted";
+		failedHarness.agent.error = "child failed";
+		failedMessage.details.ok = false;
+		failedHarness.widget.addCompleted(failedHarness.agent, failedMessage, { squashable: false });
+		const header = (harness: IdleHarness) =>
+			harness.widgetComponent().render(120).find((line) => line.includes("/agent")) ?? "";
+
+		expect(header(runningHarness), "Expected a live row to name its running state").toMatch(
+			/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏].*running/,
+		);
+		expect(header(idleHarness), "Expected a parked live row to have a distinct idle state").toMatch(
+			/◉.*idle/,
+		);
+		expect(header(completedHarness), "Expected a finished snapshot to name completion").toMatch(
+			/✓.*completed/,
+		);
+		expect(header(failedHarness), "Expected a failed snapshot to name failure").toMatch(
+			/✗.*failed/,
+		);
+	});
+
+	test("renders an idle agent as a distinct turn-complete entry with its response preview", () => {
 		const harness = buildIdleHarness();
 		const lines = harness.widgetComponent().render(120);
 
 		expect(lines[0]).toContain("✓ User agents");
 		const header = lines.find((line) => line.includes("/agent")) ?? "";
-		expect(header).toContain("✓");
+		expect(header).toContain("◉");
 		expect(header).not.toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
 		expect(header).toContain("3.0s");
 		expect(header).not.toContain("1m");
@@ -811,6 +847,47 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 			harness.viewer().render(100).find((line) => line.includes("/agent")) ?? "";
 
 		expect(overlayHeader).toContain(harness.agent.sessionId);
+	});
+
+	test("i copies the agent session id and temporarily shows green confirmation", () => {
+		const clipboardWrites: string[] = [];
+		const scheduled: Array<{ callback: () => void; delay: number | undefined }> = [];
+		const clipboard = spyOn(childProcess, "execFile").mockImplementation(
+			((file: string, callback: (error: Error | null) => void) => {
+				expect(file).toBe("pbcopy");
+				callback(null);
+				return {
+					stdin: { end: (text: string) => clipboardWrites.push(text) },
+				} as unknown as childProcess.ChildProcess;
+			}) as typeof childProcess.execFile,
+		);
+		const timeouts = spyOn(globalThis, "setTimeout").mockImplementation((callback, delay) => {
+			scheduled.push({ callback: callback as () => void, delay });
+			return scheduled.length as unknown as ReturnType<typeof setTimeout>;
+		});
+		try {
+			const harness = buildIdleHarness();
+			harness.openViewer();
+			const viewer = harness.viewer();
+
+			expect(viewer.render(140).join("\n")).toContain("i ID");
+			viewer.handleInput?.("i");
+
+			expect(
+				clipboardWrites,
+				"Expected i to write the full child-session id to the clipboard",
+			).toEqual([harness.agent.sessionId]);
+			expect(viewer.render(140).join("\n")).toContain("✓ copied ID");
+			expect(harness.foregroundCalls).toContainEqual({ color: "success", text: "✓ copied ID" });
+			expect(scheduled.map(({ delay }) => delay)).toEqual([1500]);
+
+			scheduled[0]?.callback();
+			expect(viewer.render(140).join("\n")).toContain("i ID");
+			expect(viewer.render(140).join("\n")).not.toContain("✓ copied ID");
+		} finally {
+			clipboard.mockRestore();
+			timeouts.mockRestore();
+		}
 	});
 
 	test("Enter in the overlay steers an idle agent by resuming a new turn, not by queueing into the session", () => {
@@ -1087,6 +1164,134 @@ describe("UserAgentWidget rebase refusal warning", () => {
 		viewer.handleInput?.("r");
 
 		expect(viewer.render(100).join("\n")).not.toContain("Can't rebase");
+	});
+});
+
+describe("UserAgentWidget selected-row action parity", () => {
+	test("shows the selected short ID and gives both clipboard actions parity", () => {
+		const fullSessionId = "0199aaaa-8b1a-7c3d-9e05-6a2f18d7b4ce";
+		const clipboardWrites: string[] = [];
+		const scheduled: Array<{ callback: () => void; delay: number | undefined }> = [];
+		const clipboard = spyOn(childProcess, "execFile").mockImplementation(
+			((file: string, callback: (error: Error | null) => void) => {
+				expect(file).toBe("pbcopy");
+				callback(null);
+				return {
+					stdin: { end: (text: string) => clipboardWrites.push(text) },
+				} as unknown as childProcess.ChildProcess;
+			}) as typeof childProcess.execFile,
+		);
+		const timeouts = spyOn(globalThis, "setTimeout").mockImplementation((callback, delay) => {
+			scheduled.push({ callback: callback as () => void, delay });
+			return scheduled.length as unknown as ReturnType<typeof setTimeout>;
+		});
+		try {
+			const harness = buildIdleHarness();
+			harness.agent.sessionId = fullSessionId;
+			harness.agent.task = "a long selected-agent task ".repeat(6);
+			harness.sendWidgetKey("\x1b[B");
+
+			const selectedWidget = harness.widgetComponent().render(80).join("\n");
+			expect(selectedWidget).toContain("0199aaaa");
+			expect(selectedWidget).not.toContain(fullSessionId);
+			expect(selectedWidget).toContain("i ID");
+
+			harness.sendWidgetKey("i");
+
+			expect(
+				clipboardWrites,
+				"Expected widget i to copy the selected agent's full session id",
+			).toEqual([fullSessionId]);
+			expect(harness.widgetComponent().render(140).join("\n")).toContain("✓ copied ID");
+			expect(harness.foregroundCalls).toContainEqual({ color: "success", text: "✓ copied ID" });
+			expect(scheduled.map(({ delay }) => delay)).toEqual([1500]);
+
+			scheduled[0]?.callback();
+			expect(harness.widgetComponent().render(140).join("\n")).toContain("i ID");
+
+			harness.sendWidgetKey("c");
+			expect(
+				clipboardWrites,
+				"Expected widget c to copy the selected agent's latest response",
+			).toEqual([fullSessionId, harness.agent.responseText]);
+			expect(harness.widgetComponent().render(140).join("\n")).toContain("✓ copied");
+			expect(scheduled.map(({ delay }) => delay)).toEqual([1500, 1500]);
+		} finally {
+			clipboard.mockRestore();
+			timeouts.mockRestore();
+		}
+	});
+
+	test("s squashes the selected agent without opening the expanded view", () => {
+		const harness = buildIdleHarness();
+		harness.sendWidgetKey("\x1b[B");
+
+		expect(harness.widgetComponent().render(140).join("\n")).toContain("s squash");
+		harness.sendWidgetKey("s");
+
+		expect(harness.squashedResults.map((message) => message.content)).toEqual([
+			"<user_agent>fine how are you?</user_agent>",
+		]);
+		expect(harness.agent.status).toBe("posted");
+		expect(harness.retireCalls()).toBe(1);
+		expect(harness.widgetComponent().render(140).join("\n")).not.toContain("s squash");
+	});
+
+	test("r rebases the selected agent without opening the expanded view", () => {
+		const delivered: string[] = [];
+		const harness = buildIdleHarness(undefined, {
+			canDeliver: () => true,
+			deliver: (agent) => delivered.push(agent.id),
+		});
+		harness.sendWidgetKey("\x1b[B");
+
+		expect(harness.widgetComponent().render(140).join("\n")).toContain("r rebase");
+		harness.sendWidgetKey("r");
+
+		expect(delivered, "Expected widget r to rebase the selected agent").toEqual(["user-1"]);
+		expect(harness.agent.mainContextState).toBe("rebased");
+		expect(harness.agent.status).toBe("posted");
+		expect(harness.retireCalls()).toBe(1);
+	});
+
+	test("r requires confirmation before rebasing detaches another parked agent", () => {
+		const delivered: string[] = [];
+		const retirements: string[] = [];
+		const parked = secondaryAgent(2, "idle", retirements);
+		const harness = buildIdleHarness(
+			undefined,
+			{ canDeliver: () => true, deliver: (agent) => delivered.push(agent.id) },
+			[parked],
+		);
+		harness.sendWidgetKey("\x1b[B");
+
+		harness.sendWidgetKey("r");
+		expect(delivered).toEqual([]);
+		expect(harness.widgetComponent().render(140).join("\n")).toContain(
+			"Rebase will detach 1 other agent session. r again to confirm",
+		);
+
+		harness.sendWidgetKey("r");
+		expect(delivered).toEqual(["user-1"]);
+		expect(harness.detachedSessionIds).toEqual([parked.sessionId]);
+		expect(retirements).toEqual([parked.id]);
+	});
+
+	test("r explains why the selected agent cannot rebase", () => {
+		const delivered: unknown[] = [];
+		const harness = buildIdleHarness(undefined, {
+			canDeliver: () => false,
+			deliver: (...args) => delivered.push(args),
+		});
+		harness.sendWidgetKey("\x1b[B");
+
+		expect(harness.widgetComponent().render(140).join("\n")).not.toContain("r rebase");
+		harness.sendWidgetKey("r");
+
+		expect(delivered).toEqual([]);
+		expect(harness.widgetComponent().render(140).join("\n")).toContain(
+			"Can't rebase: the main session has drifted since dispatch",
+		);
 	});
 });
 

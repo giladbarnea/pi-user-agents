@@ -69,7 +69,7 @@ Every agent gets a row in a widget under the editor: status, task, model, turn c
 
 <br>
 
-Press `←` or `↓` from the editor to focus the widget, pick an agent, press `Enter`, and its overlay opens: the full conversation, streaming live, following the tail as it grows. Tool calls render as proper views — `read`, `edit`, `write`, `grep`, `find`, `ls`, and `bash` each get a dedicated format, everything else a readable generic one.
+Press `←` or `↓` from the editor to focus the widget. The selected row shows a short session ID and offers the same agent actions as the overlay. Press `Enter` to open the full conversation, streaming live and following the tail as it grows. Tool calls render as proper views — `read`, `edit`, `write`, `grep`, `find`, `ls`, and `bash` each get a dedicated format, everything else a readable generic one.
 
 <a href="screenshots/overlay.png">
   <img src="screenshots/overlay.png" width="100%" alt="The agent overlay: a rendered bash call, its output, a todo update, and the final response, over the dimmed main conversation">
@@ -173,15 +173,16 @@ Everything goes through one command: `/agent [options] <task>`. Its one companio
 | Widget / overlay | `d` `d` | Detach the agent, keeping its session (twice to confirm) |
 | Widget / overlay | `Esc` | Back |
 | Overlay | `Enter` | Steer mid-turn, or start another turn when idle |
-| Overlay | `s` | Squash the conversation into the main context |
-| Overlay | `r` | Rebase the raw conversation into the main context (fast-forward only) |
-| Overlay | `c` | Copy the latest response |
+| Widget / overlay | `s` | Squash the conversation into the main context |
+| Widget / overlay | `r` | Rebase the raw conversation into the main context (fast-forward only) |
+| Widget / overlay | `c` | Copy the latest response |
+| Widget / overlay | `i` | Copy the agent's full session ID |
 | Overlay | scroll · `End` | Pause tail-following · resume it |
 
 ## Good to know
 
 - Some accepted `pi` options have no effect on a background run (the session, approval, offline, and API-key families). They parse; they just don't do anything yet.
-- `c` copies via `pbcopy`, so it's macOS-only for now.
+- `c` and `i` copy via `pbcopy`, so they are macOS-only for now.
 - The overlay caps very large tool outputs and omits thinking entries.
 
 ## Roadmap
