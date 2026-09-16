@@ -319,7 +319,7 @@ export class AgentViewer implements Component {
 						: "completed";
 		const metadata = [
 			th.fg("dim", this.agent.modelLabel),
-			renderAgentContextMeter(this.agent, th),
+			renderAgentContextMeter(this.agent, th, { showPercentage: true }),
 			th.fg("dim", status),
 			...stats.map((stat) => th.fg("dim", stat)),
 			th.fg("dim", this.agent.sessionId),

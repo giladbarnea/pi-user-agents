@@ -33,9 +33,13 @@ export function renderContextMeter(
 export function renderAgentContextMeter(
 	agent: ContextMeterAgent,
 	theme: Pick<Theme, "fg">,
+	options: { showPercentage?: boolean } = {},
 ): string {
 	const percent = "status" in agent
 		? agent.session?.getContextUsage()?.percent
 		: agent.contextPercent;
-	return renderContextMeter(percent, theme);
+	const meter = renderContextMeter(percent, theme);
+	if (!options.showPercentage || percent === undefined) return meter;
+	const boundedPercent = Math.max(0, Math.min(100, percent));
+	return `${meter}${theme.fg(contextMeterColor(boundedPercent), `${Math.floor(boundedPercent)}%`)}`;
 }

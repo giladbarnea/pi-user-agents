@@ -849,7 +849,17 @@ describe("UserAgentWidget idle (turn-complete, alive) agents", () => {
 		expect(widgetHeader.indexOf(meter)).toBeLessThan(
 			widgetHeader.indexOf("hello how are you?"),
 		);
-		expect(overlayHeader).toContain(`model · ${meter} · idle`);
+		expect(overlayHeader).toContain(`model · ${meter}50% · idle`);
+	});
+
+	test("attaches the unpadded rounded-down context percentage to the overlay meter", () => {
+		const harness = buildIdleHarness({ tokens: 25_800, contextWindow: 200_000, percent: 12.9 });
+		harness.openViewer();
+		const overlayHeader =
+			harness.viewer().render(100).find((line) => line.includes("/agent")) ?? "";
+
+		expect(overlayHeader).toContain("model · ▁12% · idle");
+		expect(overlayHeader).not.toContain("▁ 12%");
 	});
 
 	test("shows the agent's own session id in the overlay header, for /resume after detaching", () => {
