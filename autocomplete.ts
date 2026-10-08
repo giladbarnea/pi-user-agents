@@ -322,13 +322,20 @@ function getToolSegment(
 ): ToolSegment {
 	const value = line.slice(expectation.replacementStart, expectation.replacementEnd);
 	const cursorOffset = cursorCol - expectation.replacementStart;
-	const segmentStart = value.lastIndexOf(",", cursorOffset - 1) + 1;
+	const commaEnd = value.lastIndexOf(",", cursorOffset - 1) + 1;
+	// Pi's --tools takes +name/-name entries; completion replaces only the name after the sign.
+	const signLength =
+		expectation.option.semanticId === "tools" && /^[+-]/.test(value.slice(commaEnd, cursorOffset))
+			? 1
+			: 0;
+	const segmentStart = commaEnd + signLength;
 	const nextComma = value.indexOf(",", cursorOffset);
 	const segmentEnd = nextComma === -1 ? value.length : nextComma;
 	const selectedNames = new Set(
 		value
 			.split(",")
-			.filter((_name, index) => index !== value.slice(0, segmentStart).split(",").length - 1),
+			.filter((_name, index) => index !== value.slice(0, commaEnd).split(",").length - 1)
+			.map((name) => name.replace(/^[+-]/, "")),
 	);
 	return {
 		fragment: value.slice(segmentStart, cursorOffset),

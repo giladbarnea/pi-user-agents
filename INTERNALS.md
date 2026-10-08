@@ -113,7 +113,7 @@ Type `/agent -` and the option menu opens immediately — no Tab is required. Sh
 
 The finite value menus are thinking levels, live providers, live models, and the session's live tool catalog. Models from the configured `enabledModels` scope lead the unfiltered model menu; once you type a query, Pi's fuzzy relevance controls the order and scope only breaks equal-score ties. `--provider` narrows the model menu for either `-m` or `--model`. A completed boolean, thinking level, provider, or model leaves exactly one trailing space.
 
-`--tools`/`-t` and `--exclude-tools`/`-xt` complete one comma-delimited segment at a time. Accepting `grep` produces `--tools grep│` — the menu closes without inserting a space or comma. Type `,` to open the next segment immediately; already selected tools are omitted. Type a normal space when the tool list is finished.
+`--tools`/`-t` and `--exclude-tools`/`-xt` complete one comma-delimited segment at a time. Accepting `grep` produces `--tools grep│` — the menu closes without inserting a space or comma. Type `,` to open the next segment immediately; already selected tools are omitted. Type a normal space when the tool list is finished. In `--tools`, a `+name`/`-name` entry keeps its sign: `+gr` completes to `+grep`.
 
 Free-form values are guarded instead of guessed. Selecting `--system-prompt` produces `/agent --system-prompt "│" `, with the cursor between the quotes and the trailing separator already preserved.
 

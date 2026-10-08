@@ -196,6 +196,30 @@ describe("editor semantic coloring", () => {
 		}
 	});
 
+	test("validates +name/-name tool selections with Pi's tool-list rules", async () => {
+		const tools = [
+			{ name: "read", description: "Read files" },
+			{ name: "grep", description: "Search files" },
+		];
+		for (const { input, value, color } of [
+			{ input: "--tools +grep,-read", value: "+grep,-read", color: "syntaxString" },
+			{ input: "-t -read", value: "-read", color: "syntaxString" },
+			{ input: "--tools +missing", value: "+missing", color: "error" },
+			{ input: "--tools +grep,read", value: "+grep,read", color: "error" },
+			{ input: "--tools +gr*", value: "+gr*", color: "error" },
+			{ input: "--exclude-tools -read", value: "-read", color: "error" },
+		] as const) {
+			const harness = await createEditorHarness(undefined, [], tools, [], {
+				themeFg: createMarkingThemeFg(new Set()),
+			});
+			harness.type(`/agent ${input} fix`);
+			assert.ok(
+				harness.renderRaw().includes(`${colored(color, value)} fix`),
+				`Expected ${input} to paint its value as ${color}. Rendered:\n${harness.renderRaw()}`,
+			);
+		}
+	});
+
 	test("paints a quoted value with its quotes", async () => {
 		const harness = await createEditorHarness(undefined, [], [], [], {
 			themeFg: createMarkingThemeFg(new Set()),
