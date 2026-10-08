@@ -625,7 +625,9 @@ export async function runChildTurns(
 ): Promise<void> {
 	let instruction = initialInstruction;
 	while (true) {
+		if (runningAgent.aborted) return;
 		const turnMessageStart = session.agent.state.messages.length;
+		runningAgent.runAborted = false;
 		if (!runningAgent.interruptRequested) {
 			logSteering(runningAgent.id, "turn-prompt-started", {
 				streaming: session.isStreaming,
@@ -633,8 +635,13 @@ export async function runChildTurns(
 			});
 			await session.prompt(instruction);
 		}
-		if (runningAgent.interruptRequested) {
-			const response = interruptedTurnResponse(session, turnMessageStart);
+		if (runningAgent.aborted) return;
+		if (runningAgent.interruptRequested || runningAgent.runAborted) {
+			const response = interruptedTurnResponse(
+				session,
+				turnMessageStart,
+				runningAgent.interruptRequested ? "Interrupted by user." : "Run cancelled.",
+			);
 			runningAgent.interruptRequested = false;
 			runningAgent.mainContextState = "separate";
 			runningAgent.status = "done-waiting-to-post";
@@ -693,14 +700,14 @@ export async function runChildTurns(
 	}
 }
 
-function interruptedTurnResponse(session: AgentSession, turnMessageStart: number): string {
+function interruptedTurnResponse(session: AgentSession, turnMessageStart: number, reason: string): string {
 	const assistantMessages = session.agent.state.messages
 		.slice(turnMessageStart)
 		.filter((message) => message.role === "assistant");
 	const lastAssistantMessage = assistantMessages.at(-1);
 	const partialResponse = lastAssistantMessage ? assistantText(lastAssistantMessage).trim() : "";
-	if (!partialResponse) return "Interrupted by user.";
-	return `Interrupted by user.\n\n${partialResponse}`;
+	if (!partialResponse) return reason;
+	return `${reason}\n\n${partialResponse}`;
 }
 
 async function createChildSession(
@@ -835,8 +842,10 @@ export function subscribeToChildSession(
 				streaming: session.isStreaming,
 				messageCount: event.messages.length,
 			});
-		if (event.type === "agent_settled")
-			logSteering(runningAgent.id, "child-agent-settled", { streaming: session.isStreaming });
+		if (event.type === "agent_settled") {
+			runningAgent.runAborted = event.aborted;
+			logSteering(runningAgent.id, "child-agent-settled", { streaming: session.isStreaming, aborted: event.aborted });
+		}
 		if (event.type === "turn_start")
 			logSteering(runningAgent.id, "turn-started", { streaming: session.isStreaming });
 		if (event.type === "turn_end")

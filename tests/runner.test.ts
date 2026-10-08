@@ -1185,7 +1185,7 @@ describe("subscribeToChildSession — capturing a live child compaction", () => 
 });
 
 describe("flushSessionFile — a child file on disk before any assistant message", () => {
-	test("writes the header, the dispatch record, and the messages so another Pi can resume the session", () => {
+	test("writes the header and dispatch record before any conversation so another Pi can resume the session", () => {
 		const sessionDirectory = mkdtempSync(join(tmpdir(), "pi-user-agents-flush-"));
 		try {
 			const child = SessionManager.create("/tmp/project", sessionDirectory, {
@@ -1193,9 +1193,8 @@ describe("flushSessionFile — a child file on disk before any assistant message
 			});
 			const record: DispatchRecordData = { forwardedArgs: ["--tools", "read"], task: "audit", isolate: false };
 			child.appendCustomEntry(DISPATCH_ENTRY_TYPE, record);
-			persistMessages(child, [{ role: "user", content: "inherited ask", timestamp: 1 }] as AgentMessage[], []);
 			const sessionFile = child.getSessionFile() as string;
-			expect(existsSync(sessionFile), "Fixture check: pi defers the file until an assistant message").toBe(false);
+			expect(existsSync(sessionFile), "Fixture check: metadata alone does not create a session file").toBe(false);
 
 			expect(flushSessionFile(child)).toBe(sessionFile);
 
@@ -1203,9 +1202,7 @@ describe("flushSessionFile — a child file on disk before any assistant message
 			expect(reopened.getSessionId()).toBe(child.getSessionId());
 			expect(reopened.getHeader()?.parentSession).toBe("/tmp/main.jsonl");
 			expect(readDispatchRecord(reopened)).toEqual(record);
-			expect(reopened.buildSessionContext().messages).toEqual([
-				{ role: "user", content: "inherited ask", timestamp: 1 },
-			] as AgentMessage[]);
+			expect(reopened.buildSessionContext().messages).toEqual([]);
 			expect(flushSessionFile(child), "Expected a second flush to leave the file alone").toBe(sessionFile);
 		} finally {
 			rmSync(sessionDirectory, { recursive: true, force: true });

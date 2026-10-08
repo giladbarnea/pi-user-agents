@@ -144,6 +144,8 @@ export type RunningAgent = {
 	aborted?: boolean;
 	/** Set when the user interrupts only the active turn, leaving the child session alive. */
 	interruptRequested?: boolean;
+	/** Cancellation outcome of the current prompt, reported at session-level settlement. */
+	runAborted?: boolean;
 };
 
 export type CompletedAgent = {
