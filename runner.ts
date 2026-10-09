@@ -422,7 +422,12 @@ export function createAgentValueValidator(
 		}
 		if (option.completionDomain === "tool") {
 			const parsed = parseArgs([option.names[0]!, value]);
-			const requestedNames = option.semanticId === "tools" ? parsed.tools : parsed.excludeTools;
+			if (parsed.diagnostics.some((diagnostic) => diagnostic.type === "error")) return false;
+			// A --tools list of +name/-name entries names its tools after the sign.
+			const requestedNames =
+				option.semanticId === "tools"
+					? parsed.tools?.map((entry) => entry.replace(/^[+-]/, ""))
+					: parsed.excludeTools;
 			const knownNames = new Set(getToolNames());
 			return (requestedNames ?? []).every((name) => knownNames.has(name));
 		}

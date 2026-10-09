@@ -3,10 +3,15 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+	createAgentSessionFromServices,
+	ModelRuntime,
+	SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import { readDispatchRecord } from "../attach.ts";
 import {
 	buildChildResourceLoaderOptions,
+	createChildServices,
 	flushSessionFile,
 	handleAgentCommand,
 	PANE_DISPATCH_PREAMBLE,
@@ -14,6 +19,7 @@ import {
 	parseForwardedArgs,
 	persistMessages,
 	resolveForwardedOptions,
+	resolveToolOptions,
 	runChildTurns,
 	subscribeToChildSession,
 	waitForInstruction,
@@ -623,6 +629,50 @@ describe("resolveForwardedOptions — static-arity forwarding (§7)", () => {
 
 	test("throws on a pi parser error", () => {
 		expect(() => parseForwardedArgs(["--name"])).toThrow(/--name/);
+	});
+
+	test("rejects a tool list that mixes plain names with +name/-name entries", () => {
+		expect(() => parseForwardedArgs(["--tools", "+grep,read"])).toThrow(/cannot be mixed/);
+	});
+
+	test("a child session gets the tools Pi selects for the forwarded tool options", async () => {
+		await withTemporaryAgentDir(async (cwd) => {
+			const ctx = {
+				cwd,
+				isProjectTrusted: () => false,
+				modelRegistry: { runtime: modelRuntime },
+			} as unknown as ExtensionCommandContext;
+			for (const { input, activeTools } of [
+				{ input: "-t +grep,-write", activeTools: ["read", "bash", "edit", "grep"] },
+				{ input: "--tools -bash", activeTools: ["read", "edit", "write"] },
+				{ input: "-nt -t +grep", activeTools: ["grep"] },
+				{ input: "-t +grep -xt edit", activeTools: ["read", "bash", "write", "grep"] },
+				{ input: "--tools read,grep", activeTools: ["read", "grep"] },
+				{ input: "-xt bash", activeTools: ["read", "edit", "write"] },
+				{ input: "-nt", activeTools: [] },
+			]) {
+				const parsed = parseForwardedArgs(
+					parseAgentCommand(`${input} --no-extensions review it`, "agent").forwardedArgs,
+				);
+				const services = await createChildServices(
+					ctx,
+					buildChildResourceLoaderOptions(parsed, cwd),
+				);
+				const { session } = await createAgentSessionFromServices({
+					services,
+					sessionManager: SessionManager.inMemory(cwd),
+					...resolveToolOptions(parsed),
+				});
+				try {
+					expect(
+						session.getActiveToolNames(),
+						`Expected /agent ${input} to give the child exactly these tools`,
+					).toEqual(activeTools);
+				} finally {
+					session.dispose();
+				}
+			}
+		});
 	});
 });
 

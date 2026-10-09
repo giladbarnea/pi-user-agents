@@ -412,6 +412,37 @@ describe("agent command editor autocomplete", () => {
 		}
 	});
 
+	test("--tools completes the name after a +/- sign and keeps the sign", async () => {
+		const harness = await createEditorHarness(process.cwd(), [], [
+			{ name: "grep", description: "Search file contents" },
+			{ name: "read", description: "Read a file" },
+		]);
+		harness.type("/agent --tools +gr");
+		await harness.waitForRender((rendered) => rendered.includes("Search file contents"));
+		harness.press("\t");
+		assert.equal(
+			harness.editor.getText(),
+			"/agent --tools +grep",
+			`Expected the + sign to survive completion. Got: ${harness.editor.getText()}`,
+		);
+
+		harness.type(",-");
+		await harness.waitForRender((rendered) => rendered.includes("Read a file"));
+		const nextSegmentMenu = harness.render();
+		assert.doesNotMatch(
+			nextSegmentMenu,
+			/\n[→ ]+grep\s+Search file contents/,
+			`Expected the signed tool to count as selected.\nRendered editor:\n${nextSegmentMenu}`,
+		);
+		harness.type("re");
+		harness.press("\t");
+		assert.equal(
+			harness.editor.getText(),
+			"/agent --tools +grep,-read",
+			`Expected the - sign to survive completion. Got: ${harness.editor.getText()}`,
+		);
+	});
+
 	test("a live tool added after editor setup completes only the active middle segment", async () => {
 		const tools = [
 			{ name: "grep", description: "Search file contents" },

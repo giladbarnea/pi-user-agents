@@ -205,7 +205,8 @@ The finite value domains implemented today are:
 - tool names from the live public `pi.getAllTools()` catalog for `--tools`/`-t` and
   `--exclude-tools`/`-xt`.
 
-Tool completion is local to the active comma-delimited segment. Accepting a tool replaces only
+Tool completion is local to the active comma-delimited segment. In `--tools`, a leading `+` or
+`-` stays in place and completion replaces only the name after it. Accepting a tool replaces only
 that segment and closes the menu without adding a space or comma. Typing `,` immediately opens
 the next segment and excludes every tool already selected elsewhere in the value. The user
 types a normal space to finish the complete tool list. Other non-path value options remain
@@ -247,8 +248,9 @@ source spans:
 - `value` — the value consumed by a leading value-taking option. A quoted value's span
   includes its surrounding quotes;
 - `invalid-value` — a leading closed-set value rejected by the same validation used at
-  submission and session creation: Pi's argument parser for thinking levels, exact live model
-  IDs or user-defined aliases, and the live provider and tool catalogs;
+  submission and session creation: Pi's argument parser for thinking levels and tool-list
+  syntax (`+name`/`-name` entries cannot mix with plain names), exact live model IDs or
+  user-defined aliases, and the live provider and tool catalogs;
 - `blocked` — a blocked option in args mode, plus the value a blocked value-taking option
   would consume (`--theme ./theme.json` yields two `blocked` tokens). Unlike
   `parseAgentCommand`, the scan never throws: it records the first blocked token and keeps
