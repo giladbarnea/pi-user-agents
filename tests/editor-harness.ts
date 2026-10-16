@@ -151,7 +151,14 @@ export async function createEditorHarness(
 	editor.setAutocompleteProvider?.(provider);
 	const runtimeEditor = editor as EditorHarness["editor"];
 
-	const render = () => runtimeEditor.render(100).join("\n").replace(ANSI_SEQUENCE, "");
+	// Pi 1.2 defers cursor styling to the TUI; keep component assertions independent of that step.
+	const renderRaw = (width: number): string =>
+		runtimeEditor
+			.render(width)
+			.join("\n")
+			.replaceAll("\x1b_pi:fc\x07", "\x1b[7m")
+			.replaceAll("\x1b_pi:/fc\x07", "\x1b[0m");
+	const render = () => renderRaw(100).replace(ANSI_SEQUENCE, "");
 	return {
 		editor: runtimeEditor,
 		moveCursorLeft(count: number): void {
@@ -162,7 +169,7 @@ export async function createEditorHarness(
 		},
 		render,
 		renderRaw(width = 100): string {
-			return runtimeEditor.render(width).join("\n");
+			return renderRaw(width);
 		},
 		type(text: string): void {
 			for (const character of text) runtimeEditor.handleInput(character);
