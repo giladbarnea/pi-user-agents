@@ -674,6 +674,64 @@ describe("resolveForwardedOptions — static-arity forwarding (§7)", () => {
 			}
 		});
 	});
+
+	// Pi 1.3 resumes a session with the tool loadout its transcript records, unless the tool options
+	// select tools explicitly. Attach replays the dispatch record through this same path.
+	test("a resumed child keeps the tools its dispatch selected explicitly, not the loadout its transcript records", async () => {
+		await withTemporaryAgentDir(async (cwd) => {
+			const ctx = {
+				cwd,
+				isProjectTrusted: () => false,
+				modelRegistry: { runtime: modelRuntime },
+			} as unknown as ExtensionCommandContext;
+			const recordedLoadout = ["read", "bash", "edit", "write", "grep", "find"].map((name) => ({
+				name,
+				description: name,
+				parameters: { type: "object", properties: {} },
+			}));
+			for (const { input, activeTools } of [
+				{ input: "--tools read,grep", activeTools: ["read", "grep"] },
+				{ input: "-nt", activeTools: [] },
+				{ input: "--no-builtin-tools", activeTools: [] },
+			]) {
+				const child = SessionManager.create(cwd);
+				persistMessages(
+					child,
+					[
+						{ role: "system", content: "child prompt", toolsAdded: recordedLoadout, timestamp: 1 },
+						{ role: "user", content: "review the migration", timestamp: 2 },
+						{
+							role: "assistant",
+							content: [{ type: "text", text: "reviewed" }],
+							timestamp: 3,
+							stopReason: "stop",
+						},
+					] as AgentMessage[],
+					[],
+				);
+				const parsed = parseForwardedArgs(
+					parseAgentCommand(`${input} --no-extensions review it`, "agent").forwardedArgs,
+				);
+				const services = await createChildServices(
+					ctx,
+					buildChildResourceLoaderOptions(parsed, cwd),
+				);
+				const { session } = await createAgentSessionFromServices({
+					services,
+					sessionManager: SessionManager.open(flushSessionFile(child)),
+					...resolveToolOptions(parsed),
+				});
+				try {
+					expect(
+						session.getActiveToolNames(),
+						`Expected a resumed /agent ${input} child to keep exactly its dispatch tools`,
+					).toEqual(activeTools);
+				} finally {
+					session.dispose();
+				}
+			}
+		});
+	});
 });
 
 describe("persistMessages — the child session file is resumable", () => {
