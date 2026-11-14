@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { renderActivity } from "../agent-viewer.ts";
 import type { AgentMessage, AgentStatus, RunningAgent, Theme, UIContext } from "../shared.js";
@@ -8,6 +9,8 @@ const codingAgentEntry = import.meta.resolve("@earendil-works/pi-coding-agent");
 const { getThemeByName } = await import(
 	new URL("./modes/interactive/theme/theme.js", codingAgentEntry).href
 );
+
+initTheme(undefined, false);
 
 /**
  * Historical tool rendering in the agent overlay.
