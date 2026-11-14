@@ -34,7 +34,7 @@
     "test": "bun test"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=1.1.0",
+    "@earendil-works/pi-coding-agent": ">=1.4.0",
     "@earendil-works/pi-tui": "*"
   },
   "publishConfig": {
@@ -46,8 +46,8 @@
     ]
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "1.1.0",
-    "@earendil-works/pi-coding-agent": "1.1.0",
-    "@earendil-works/pi-tui": "0.85.1"
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@earendil-works/pi-tui": "1.5.2"
   }
 }
